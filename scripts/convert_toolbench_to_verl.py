@@ -211,7 +211,7 @@ def main():
     parser = argparse.ArgumentParser(description="Convert StableToolBench data to verl format")
     parser.add_argument("--input", type=str, required=True,
                        help="Input JSON file path")
-    parser.add_argument("--output", type=str, required=True,
+    parser.add_argument("--output", type=str,
                        help="Output parquet file path")
     parser.add_argument("--max_samples", type=int, default=None,
                        help="Maximum number of samples to process (for testing)")
