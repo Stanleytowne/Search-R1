@@ -32,7 +32,20 @@ import hydra
 def main(config):
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
+        # Get GPU count from CUDA_VISIBLE_DEVICES or config
+        import os
+        cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '')
+        if cuda_visible:
+            num_gpus = len(cuda_visible.split(','))
+        else:
+            num_gpus = config.trainer.n_gpus_per_node
+        
+        ray.init(
+            num_gpus=num_gpus,
+            num_cpus=num_gpus,  # Match CPU to GPU count
+            runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}},
+            ignore_reinit_error=True
+        )
 
     ray.get(main_task.remote(config))
 
