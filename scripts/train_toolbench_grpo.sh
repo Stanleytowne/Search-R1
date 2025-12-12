@@ -10,12 +10,12 @@ export NCCL_DEBUG=WARN
 export VLLM_ATTENTION_BACKEND=XFORMERS
 
 # 数据路径
-DATA_DIR="${DATA_DIR:-~/data/toolbench}"
+DATA_DIR="${DATA_DIR:-data/toolbench}"
 TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/train.parquet}"
 VAL_FILE="${VAL_FILE:-$DATA_DIR/val.parquet}"
 
 # 模型路径
-MODEL_PATH="${MODEL_PATH:-~/models/deepseek-llm-7b-chat}"
+MODEL_PATH="${MODEL_PATH:-ToolBench/ToolLLaMA-2-7b-v2}"
 
 # ToolBench服务器
 TOOLBENCH_URL="${TOOLBENCH_URL:-http://127.0.0.1:8000}"
