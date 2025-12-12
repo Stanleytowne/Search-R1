@@ -86,7 +86,6 @@ class ToolBenchRewardManager:
             # 解码response
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
-            breakpoint()
             # 移除</s> token（如果存在）
             response_str = response_str.replace('</s>', '').strip()
             
