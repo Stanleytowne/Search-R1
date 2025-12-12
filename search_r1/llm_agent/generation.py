@@ -78,40 +78,37 @@ class LLMGenerationManager:
             # Format: Thought: ...\nAction: ...\nAction Input: {...}
             processed_responses = []
             for resp in responses_str:
+                # Remove </s> token if present (it may appear in decoded string)
+                resp = resp.replace('</s>', '').strip()
+                
                 # Check if there's a complete Action Input (function call)
                 # Look for "Action Input:" followed by JSON object
-                action_input_match = re.search(r'Action Input:\s*(\{.*?\})', resp, re.DOTALL)
-                if action_input_match:
-                    # Extract everything up to and including the complete Action Input
-                    # Find the position of "Action Input:" and extract up to the matching closing brace
-                    action_input_start = resp.find('Action Input:')
-                    if action_input_start != -1:
-                        # Find the JSON object after "Action Input:"
-                        json_start = resp.find('{', action_input_start)
-                        if json_start != -1:
-                            # Try to find the matching closing brace
-                            brace_count = 0
-                            json_end = json_start
-                            for i in range(json_start, len(resp)):
-                                if resp[i] == '{':
-                                    brace_count += 1
-                                elif resp[i] == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0:
-                                        json_end = i + 1
-                                        break
-                            if brace_count == 0:
-                                # Found complete JSON, extract up to here
-                                processed_responses.append(resp[:json_end])
-                            else:
-                                # Incomplete JSON, keep original
-                                processed_responses.append(resp)
+                action_input_start = resp.find('Action Input:')
+                if action_input_start != -1:
+                    # Find the JSON object after "Action Input:"
+                    json_start = resp.find('{', action_input_start)
+                    if json_start != -1:
+                        # Try to find the matching closing brace
+                        brace_count = 0
+                        json_end = json_start
+                        for i in range(json_start, len(resp)):
+                            if resp[i] == '{':
+                                brace_count += 1
+                            elif resp[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    json_end = i + 1
+                                    break
+                        if brace_count == 0:
+                            # Found complete JSON, extract up to here (including the closing brace)
+                            processed_responses.append(resp[:json_end])
                         else:
+                            # Incomplete JSON, keep original (but remove </s>)
                             processed_responses.append(resp)
                     else:
                         processed_responses.append(resp)
                 else:
-                    # No Action Input found, keep original response
+                    # No Action Input found, keep original response (but remove </s>)
                     processed_responses.append(resp)
             responses_str = processed_responses
         else:
