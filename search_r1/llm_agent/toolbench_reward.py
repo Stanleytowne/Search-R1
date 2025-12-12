@@ -86,7 +86,9 @@ class ToolBenchRewardManager:
             # 解码response
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
 
+            print("#" * 30)
             print(response_str)
+            print("#" * 30)
             
             # 获取原始样本索引（处理batch repeat的情况）
             # 如果batch被repeat了，需要通过index找到原始样本
