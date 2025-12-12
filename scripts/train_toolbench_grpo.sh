@@ -4,7 +4,7 @@
 set -e
 
 # 配置
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export TOKENIZERS_PARALLELISM=true
 export NCCL_DEBUG=WARN
 export VLLM_ATTENTION_BACKEND=XFORMERS
@@ -18,7 +18,7 @@ VAL_FILE="${VAL_FILE:-$DATA_DIR/val.parquet}"
 MODEL_PATH="${MODEL_PATH:-ToolBench/ToolLLaMA-2-7b-v2}"
 
 # ToolBench服务器
-TOOLBENCH_URL="${TOOLBENCH_URL:-http://127.0.0.1:8000}"
+TOOLBENCH_URL="${TOOLBENCH_URL:-http://10.153.48.52:8080}"
 TOOLBENCH_KEY="${TOOLBENCH_KEY:-}"
 
 # 训练配置
@@ -76,8 +76,7 @@ echo ""
 
 # 运行训练
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
-    --config-path verl/trainer/config \
-    --config-name grpo_toolbench_trainer \
+    --config-name=grpo_toolbench_trainer \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$VAL_FILE" \
     actor_rollout_ref.model.path="$MODEL_PATH" \

@@ -68,8 +68,7 @@ echo ""
 
 # 运行训练
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
-    --config-path verl/trainer/config \
-    --config-name ppo_toolbench_trainer \
+    --config-name=ppo_toolbench_trainer \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$VAL_FILE" \
     actor_rollout_ref.model.path="$MODEL_PATH" \
