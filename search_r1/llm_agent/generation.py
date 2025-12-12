@@ -50,6 +50,12 @@ class LLMGenerationManager:
         
         # Cache for API information extracted from prompts
         self.api_info_cache = {}
+        
+        # Track API calls and Finish calls for reward computation
+        # Format: {sample_idx: [list of (error, success)]}
+        self.api_call_history = {}
+        # Format: {sample_idx: 'give_answer' | 'give_up_and_restart' | None}
+        self.finish_call_history = {}
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
@@ -281,6 +287,12 @@ class LLMGenerationManager:
         valid_search_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
+        
+        # Initialize tracking for reward computation
+        if self.config.use_toolbench:
+            batch_size = gen_batch.batch['input_ids'].shape[0]
+            self.api_call_history = {i: [] for i in range(batch_size)}
+            self.finish_call_history = {i: None for i in range(batch_size)}
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -365,6 +377,14 @@ class LLMGenerationManager:
         meta_info['active_mask'] = active_mask.tolist()
         meta_info['valid_action_stats'] = valid_action_stats.tolist()
         meta_info['valid_search_stats'] = valid_search_stats.tolist()
+        
+        # Add ToolBench reward computation info
+        if self.config.use_toolbench:
+            meta_info['api_errors'] = {
+                i: [error for error in errors] 
+                for i, errors in self.api_call_history.items()
+            }
+            meta_info['finish_called'] = self.finish_call_history.copy()
         
         print("ACTIVE_TRAJ_NUM:", active_num_list)
         
@@ -456,6 +476,9 @@ class LLMGenerationManager:
                     # Check if it's give_answer or give_up_and_restart
                     if isinstance(content_dict, dict) and 'action_input' in content_dict:
                         return_type = content_dict['action_input'].get('return_type', 'give_answer')
+                        # Track Finish call for reward computation
+                        if i in self.finish_call_history:
+                            self.finish_call_history[i] = return_type
                         if return_type == 'give_answer':
                             next_obs.append('')
                             dones.append(1)
@@ -476,6 +499,11 @@ class LLMGenerationManager:
                     result = api_results[i]
                     error = result.get('error', '')
                     response = result.get('response', '')
+                    
+                    # Track API call result for reward computation
+                    has_error = bool(error and error.strip())
+                    if i in self.api_call_history:
+                        self.api_call_history[i].append(has_error)
                     
                     # Format as function response (matching StableToolBench format)
                     # In StableToolBench, function response is a JSON string: {"error": "", "response": "..."}
