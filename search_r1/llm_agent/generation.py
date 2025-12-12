@@ -2,13 +2,14 @@ import torch
 import re
 from collections import defaultdict
 import os
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from dataclasses import dataclass
 from .tensor_helper import TensorHelper, TensorConfig
 from verl import DataProto
 from verl.utils.tracking import Tracking
 import shutil
 import requests
+import json
 
 @dataclass
 class GenerationConfig:
@@ -21,6 +22,11 @@ class GenerationConfig:
     no_think_rl: bool=False
     search_url: str = None
     topk: int = 3
+    # ToolBench related configs
+    use_toolbench: bool = False
+    toolbench_url: str = None
+    toolbench_key: str = ""
+    default_category: str = "G1_category"  # Default category for ToolBench API calls
 
 class LLMGenerationManager:
     def __init__(
@@ -41,6 +47,9 @@ class LLMGenerationManager:
             max_obs_length=config.max_obs_length,
             max_start_length=config.max_start_length
         ))
+        
+        # Cache for API information extracted from prompts
+        self.api_info_cache = {}
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
@@ -52,18 +61,61 @@ class LLMGenerationManager:
         )['input_ids']
 
     def _postprocess_responses(self, responses: torch.Tensor) -> torch.Tensor:
-        """Process responses to stop at search operation or answer operation."""
+        """Process responses to stop at search operation or answer operation or function call."""
         responses_str = self.tokenizer.batch_decode(
             responses, 
             skip_special_tokens=True
         )
 
-        responses_str = [resp.split('</search>')[0] + '</search>'
-                 if '</search>' in resp 
-                 else resp.split('</answer>')[0] + '</answer>'
-                 if '</answer>' in resp 
-                 else resp
-                 for resp in responses_str]
+        if self.config.use_toolbench:
+            # For ToolBench format, stop at Action Input (complete JSON) or end of response
+            # Format: Thought: ...\nAction: ...\nAction Input: {...}
+            processed_responses = []
+            for resp in responses_str:
+                # Check if there's a complete Action Input (function call)
+                # Look for "Action Input:" followed by JSON object
+                action_input_match = re.search(r'Action Input:\s*(\{.*?\})', resp, re.DOTALL)
+                if action_input_match:
+                    # Extract everything up to and including the complete Action Input
+                    # Find the position of "Action Input:" and extract up to the matching closing brace
+                    action_input_start = resp.find('Action Input:')
+                    if action_input_start != -1:
+                        # Find the JSON object after "Action Input:"
+                        json_start = resp.find('{', action_input_start)
+                        if json_start != -1:
+                            # Try to find the matching closing brace
+                            brace_count = 0
+                            json_end = json_start
+                            for i in range(json_start, len(resp)):
+                                if resp[i] == '{':
+                                    brace_count += 1
+                                elif resp[i] == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        json_end = i + 1
+                                        break
+                            if brace_count == 0:
+                                # Found complete JSON, extract up to here
+                                processed_responses.append(resp[:json_end])
+                            else:
+                                # Incomplete JSON, keep original
+                                processed_responses.append(resp)
+                        else:
+                            processed_responses.append(resp)
+                    else:
+                        processed_responses.append(resp)
+                else:
+                    # No Action Input found, keep original response
+                    processed_responses.append(resp)
+            responses_str = processed_responses
+        else:
+            # Original Search-R1 format
+            responses_str = [resp.split('</search>')[0] + '</search>'
+                     if '</search>' in resp 
+                     else resp.split('</answer>')[0] + '</answer>'
+                     if '</answer>' in resp 
+                     else resp
+                     for resp in responses_str]
 
         if self.config.no_think_rl:
             raise ValueError('stop')
@@ -357,81 +409,221 @@ class LLMGenerationManager:
         NOTE penalty_for_invalid is not included in observation shown to the LLM
         
         Args:
-            envs: List of environment instances
             predictions: List of action predictions
             pad_token: Token to use for padding
+            active_mask: Mask indicating which examples are still active
+            do_search: Whether to actually execute search/API calls
             
         Returns:
-            List of observation strings
+            Tuple of (next_obs, dones, valid_action, is_search)
         """
         cur_actions, contents = self.postprocess_predictions(predictions)
         next_obs, dones, valid_action, is_search = [], [], [], []
         
-        search_queries = [content for action, content in zip(cur_actions, contents) if action == 'search']
-        if do_search:
-            search_results = self.batch_search(search_queries)
-            assert len(search_results) == sum([1 for action in cur_actions if action == 'search'])
-        else:
-            search_results = [''] * sum([1 for action in cur_actions if action == 'search'])
-
-        for i, (action, active) in enumerate(zip(cur_actions, active_mask)):
+        # Handle None active_mask
+        if active_mask is None:
+            active_mask = [True] * len(predictions)
+        elif isinstance(active_mask, torch.Tensor):
+            active_mask = active_mask.tolist()
+        
+        if self.config.use_toolbench:
+            # ToolBench mode: call APIs
+            api_calls = []
+            api_indices = []
+            for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
+                if action and action != 'Finish' and active_mask[i]:
+                    api_calls.append({
+                        'index': i,
+                        'action': action,
+                        'content': content_dict
+                    })
+                    api_indices.append(i)
             
-            if not active:
-                next_obs.append('')
-                dones.append(1)
-                valid_action.append(0)
-                is_search.append(0)
-            else:
-                if action == 'answer':
+            # Batch API calls
+            api_results = {}
+            if do_search and api_calls:
+                api_results = self.batch_call_toolbench_apis(api_calls)
+            
+            # Process results
+            api_result_idx = 0
+            for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
+                if not active:
                     next_obs.append('')
                     dones.append(1)
-                    valid_action.append(1)
+                    valid_action.append(0)
                     is_search.append(0)
-                elif action == 'search':
-                    next_obs.append(f'\n\n<information>{search_results.pop(0).strip()}</information>\n\n')
+                elif action == 'Finish':
+                    # Check if it's give_answer or give_up_and_restart
+                    if isinstance(content_dict, dict) and 'action_input' in content_dict:
+                        return_type = content_dict['action_input'].get('return_type', 'give_answer')
+                        if return_type == 'give_answer':
+                            next_obs.append('')
+                            dones.append(1)
+                            valid_action.append(1)
+                            is_search.append(0)
+                        else:  # give_up_and_restart
+                            next_obs.append('\n\nI give up and restart.\n\n')
+                            dones.append(1)
+                            valid_action.append(1)
+                            is_search.append(0)
+                    else:
+                        next_obs.append('')
+                        dones.append(1)
+                        valid_action.append(1)
+                        is_search.append(0)
+                elif action and i in api_results:
+                    # API call succeeded
+                    result = api_results[i]
+                    error = result.get('error', '')
+                    response = result.get('response', '')
+                    
+                    # Format as function response (matching StableToolBench format)
+                    # In StableToolBench, function response is a JSON string: {"error": "", "response": "..."}
+                    # This will be added to the conversation as a "function" role message
+                    function_response = json.dumps({"error": error, "response": response}, ensure_ascii=False)
+                    # The format should match what's in the data file: just the JSON string
+                    next_obs.append(function_response)
                     dones.append(0)
                     valid_action.append(1)
-                    is_search.append(1)
-                else:
-                    next_obs.append(f'\nMy previous action is invalid. \
-If I want to search, I should put the query between <search> and </search>. \
-If I want to give the final answer, I should put the answer between <answer> and </answer>. Let me try again.\n')
+                    is_search.append(1)  # Treat API calls as search-like operations
+                elif action:
+                    # Invalid API call or parsing error
+                    next_obs.append('\nMy previous action is invalid. Please check the Action and Action Input format.\n')
                     dones.append(0)
                     valid_action.append(0)
                     is_search.append(0)
+                else:
+                    # No action detected
+                    next_obs.append('\nMy previous action is invalid. Please provide Thought, Action, and Action Input.\n')
+                    dones.append(0)
+                    valid_action.append(0)
+                    is_search.append(0)
+        else:
+            # Original Search-R1 mode
+            search_queries = [content.get('content', '') if isinstance(content, dict) else content 
+                            for action, content in zip(cur_actions, contents) if action == 'search']
+            if do_search:
+                search_results = self.batch_search(search_queries)
+                assert len(search_results) == sum([1 for action in cur_actions if action == 'search'])
+            else:
+                search_results = [''] * sum([1 for action in cur_actions if action == 'search'])
+
+            for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
+                if not active:
+                    next_obs.append('')
+                    dones.append(1)
+                    valid_action.append(0)
+                    is_search.append(0)
+                else:
+                    if action == 'answer':
+                        next_obs.append('')
+                        dones.append(1)
+                        valid_action.append(1)
+                        is_search.append(0)
+                    elif action == 'search':
+                        content = content_dict.get('content', '') if isinstance(content_dict, dict) else content_dict
+                        next_obs.append(f'\n\n<information>{search_results.pop(0).strip()}</information>\n\n')
+                        dones.append(0)
+                        valid_action.append(1)
+                        is_search.append(1)
+                    else:
+                        next_obs.append(f'\nMy previous action is invalid. \
+If I want to search, I should put the query between <search> and </search>. \
+If I want to give the final answer, I should put the answer between <answer> and </answer>. Let me try again.\n')
+                        dones.append(0)
+                        valid_action.append(0)
+                        is_search.append(0)
             
-        assert len(search_results) == 0
+            assert len(search_results) == 0
             
         return next_obs, dones, valid_action, is_search
 
-    def postprocess_predictions(self, predictions: List[Any]) -> Tuple[List[int], List[bool]]:
+    def postprocess_predictions(self, predictions: List[Any]) -> Tuple[List[str], List[Dict]]:
         """
-        Process (text-based) predictions from llm into actions and validity flags.
+        Process (text-based) predictions from llm into actions and contents.
         
         Args:
             predictions: List of raw predictions
             
         Returns:
-            Tuple of (actions list, validity flags list)
+            Tuple of (actions list, contents list where each content is a dict with action_name and action_input)
         """
         actions = []
         contents = []
                 
         for prediction in predictions:
             if isinstance(prediction, str): # for llm output
-                pattern = r'<(search|answer)>(.*?)</\1>'
-                match = re.search(pattern, prediction, re.DOTALL)
-                if match:
-                    content = match.group(2).strip()  # Return only the content inside the tags
-                    action = match.group(1)
+                if self.config.use_toolbench:
+                    # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
+                    # This matches the react_parser in StableToolBench/utils.py
+                    thought_start = prediction.find("Thought: ")
+                    action_start = prediction.find("\nAction: ")
+                    action_input_start = prediction.find("\nAction Input: ")
+                    
+                    if thought_start != -1 and action_start != -1 and action_input_start != -1:
+                        action_name = prediction[action_start + len("\nAction: "):action_input_start].strip()
+                        action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
+                        
+                        # Try to parse JSON - handle both single-line and multi-line JSON
+                        action_input = {}
+                        try:
+                            # First try direct JSON parsing
+                            action_input = json.loads(action_input_str)
+                        except json.JSONDecodeError:
+                            # If that fails, try to find the JSON object boundaries
+                            # Look for the first { and try to find matching }
+                            brace_start = action_input_str.find('{')
+                            if brace_start != -1:
+                                brace_count = 0
+                                brace_end = brace_start
+                                for i in range(brace_start, len(action_input_str)):
+                                    if action_input_str[i] == '{':
+                                        brace_count += 1
+                                    elif action_input_str[i] == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            brace_end = i + 1
+                                            break
+                                if brace_count == 0:
+                                    try:
+                                        action_input = json.loads(action_input_str[brace_start:brace_end])
+                                    except json.JSONDecodeError:
+                                        # Last resort: try to extract key-value pairs
+                                        for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                                            action_input[match.group(1)] = match.group(2)
+                                        for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                                            action_input[match.group(1)] = int(match.group(2))
+                            else:
+                                # No JSON object found, try regex extraction
+                                for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                                    action_input[match.group(1)] = match.group(2)
+                                for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                                    action_input[match.group(1)] = int(match.group(2))
+                        
+                        actions.append(action_name)
+                        contents.append({
+                            'action_name': action_name,
+                            'action_input': action_input
+                        })
+                    else:
+                        actions.append(None)
+                        contents.append({})
                 else:
-                    content = ''
-                    action = None
+                    # Original Search-R1 format
+                    pattern = r'<(search|answer)>(.*?)</\1>'
+                    match = re.search(pattern, prediction, re.DOTALL)
+                    if match:
+                        content = match.group(2).strip()  # Return only the content inside the tags
+                        action = match.group(1)
+                        actions.append(action)
+                        contents.append({'action': action, 'content': content})
+                    else:
+                        content = ''
+                        action = None
+                        actions.append(action)
+                        contents.append({})
             else:
                 raise ValueError(f"Invalid prediction type: {type(prediction)}")
-            
-            actions.append(action)
-            contents.append(content)
             
         return actions, contents
 
@@ -467,3 +659,110 @@ If I want to give the final answer, I should put the answer between <answer> and
             format_reference += f"Doc {idx+1}(Title: {title}) {text}\n"
 
         return format_reference
+    
+    def extract_api_info_from_prompt(self, prompt_text: str) -> Dict[str, Any]:
+        """
+        Extract API information from the system message in the prompt.
+        This parses the StableToolBench format where APIs are listed in the system message.
+        
+        Returns a dict mapping API names to their metadata.
+        """
+        # Try to extract API list from system message
+        # Format: "Specifically, you have access to the following APIs: [...]"
+        api_info = {}
+        
+        # Look for the API list in the system message
+        api_list_match = re.search(r'Specifically, you have access to the following APIs:\s*(\[.*?\])', prompt_text, re.DOTALL)
+        if api_list_match:
+            try:
+                api_list_str = api_list_match.group(1)
+                api_list = json.loads(api_list_str)
+                
+                for api in api_list:
+                    api_name = api.get('name', '')
+                    if api_name:
+                        api_info[api_name] = {
+                            'name': api_name,
+                            'description': api.get('description', ''),
+                            'parameters': api.get('parameters', {})
+                        }
+            except json.JSONDecodeError:
+                pass
+        
+        return api_info
+    
+    def batch_call_toolbench_apis(self, api_calls: List[Dict]) -> Dict[int, Dict]:
+        """
+        Batch call ToolBench API server for multiple API calls.
+        
+        Args:
+            api_calls: List of dicts with 'index', 'action', and 'content' keys
+            
+        Returns:
+            Dict mapping example index to API response
+        """
+        results = {}
+        
+        for api_call in api_calls:
+            idx = api_call['index']
+            action_name = api_call['action']
+            content_dict = api_call['content']
+            action_input = content_dict.get('action_input', {})
+            
+            # Extract tool_name and api_name from action_name
+            # Format in StableToolBench: api_name_for_tool_name
+            # Example: racecards_for_greyhound_racing_uk
+            #   -> api_name: racecards
+            #   -> tool_name: greyhound_racing_uk
+            if '_for_' in action_name:
+                # Split on '_for_' - the last part is the tool_name
+                parts = action_name.rsplit('_for_', 1)
+                if len(parts) == 2:
+                    api_name = parts[0]
+                    tool_name = parts[1]
+                else:
+                    # Fallback: split on first occurrence
+                    parts = action_name.split('_for_', 1)
+                    api_name = parts[0]
+                    tool_name = parts[1] if len(parts) > 1 else 'unknown'
+            else:
+                # No '_for_' in name, use the whole name as api_name
+                api_name = action_name
+                tool_name = 'unknown'
+            
+            # Extract category from prompt if available, otherwise use default
+            # Category is typically in the data file name or can be inferred
+            # For now, we'll use a default that can be overridden
+            category = getattr(self.config, 'default_category', 'G1_category')
+            
+            # Call ToolBench server
+            try:
+                payload = {
+                    'category': category,
+                    'tool_name': tool_name,
+                    'api_name': action_name,  # Use full action_name as api_name for ToolBench
+                    'tool_input': action_input,
+                    'strip': '',
+                    'toolbench_key': self.config.toolbench_key
+                }
+                
+                response = requests.post(
+                    f"{self.config.toolbench_url}/virtual",
+                    json=payload,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    results[idx] = response.json()
+                else:
+                    results[idx] = {
+                        'error': f'API call failed with status {response.status_code}',
+                        'response': ''
+                    }
+            except Exception as e:
+                results[idx] = {
+                    'error': f'API call error: {str(e)}',
+                    'response': ''
+                }
+        
+        return results
