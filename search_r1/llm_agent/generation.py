@@ -10,6 +10,7 @@ from verl.utils.tracking import Tracking
 import shutil
 import requests
 import json
+import numpy as np
 
 @dataclass
 class GenerationConfig:
@@ -296,7 +297,39 @@ class LLMGenerationManager:
             batch_size = gen_batch.batch['input_ids'].shape[0]
             self.api_call_history = {i: [] for i in range(batch_size)}
             self.finish_call_history = {i: None for i in range(batch_size)}
+            # Extract category from extra_info for each sample
+            self.sample_categories = {}
+            # Try to get extra_info from non_tensor_batch
+            if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
+                extra_info = gen_batch.non_tensor_batch['extra_info']
+                if isinstance(extra_info, (list, tuple, np.ndarray)) and len(extra_info) == batch_size:
+                    for i, info in enumerate(extra_info):
+                        if isinstance(info, dict) and 'category' in info:
+                            self.sample_categories[i] = info['category']
+                        else:
+                            self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+                else:
+                    # Fallback: use default for all
+                    for i in range(batch_size):
+                        self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+            elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
+                extra_info = gen_batch.meta_info['extra_info']
+                if isinstance(extra_info, (list, tuple)) and len(extra_info) == batch_size:
+                    for i, info in enumerate(extra_info):
+                        if isinstance(info, dict) and 'category' in info:
+                            self.sample_categories[i] = info['category']
+                        else:
+                            self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+                else:
+                    # Fallback: use default for all
+                    for i in range(batch_size):
+                        self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+            else:
+                # Fallback: use default for all
+                for i in range(batch_size):
+                    self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
             print(f"[DEBUG run_llm_loop] Initialized api_call_history and finish_call_history for {batch_size} samples")
+            print(f"[DEBUG run_llm_loop] Sample categories: {dict(list(self.sample_categories.items())[:5])}...")  # Show first 5
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -812,10 +845,13 @@ If I want to give the final answer, I should put the answer between <answer> and
                 api_name = action_name
                 tool_name = 'unknown'
             
-            # Extract category from prompt if available, otherwise use default
-            # Category is typically in the data file name or can be inferred
-            # For now, we'll use a default that can be overridden
-            category = getattr(self.config, 'default_category', 'G1_category')
+            # Extract category from sample's extra_info if available
+            # Map original_index to category
+            original_idx = api_call.get('original_index', idx)
+            category = getattr(self, 'sample_categories', {}).get(original_idx, None)
+            if category is None:
+                # Fallback to default
+                category = getattr(self.config, 'default_category', 'G1_category')
             
             # Call ToolBench server
             try:
