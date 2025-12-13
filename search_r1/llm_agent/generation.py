@@ -921,7 +921,7 @@ If I want to give the final answer, I should put the answer between <answer> and
                     'error': validation_error,
                     'response': ''
                 }
-                print(f"[DEBUG] API call validation failed: {validation_error}")
+                print(f"[DEBUG] API call validation failed for action: {action_name} (tool: {tool_name}, category: {category}): {validation_error}\n")
                 continue
             
             # Call ToolBench server
@@ -948,8 +948,7 @@ If I want to give the final answer, I should put the answer between <answer> and
                         'error': f'API call failed with status {response.status_code}',
                         'response': ''
                     }
-                    print(f"[DEBUG] Calling ToolBench API: {action_name} (tool: {tool_name}, category: {category}) Error with response status: {response.status_code}")
-                    print(f"[DEBUG] Action input: {action_input}")
+                    print(f"[DEBUG] Calling ToolBench API {action_name} (tool: {tool_name}, category: {category}) with action input: {action_input} error with response status: {response.status_code}\n")
             except Exception as e:
                 results[idx] = {
                     'error': f'API call error: {str(e)}',
