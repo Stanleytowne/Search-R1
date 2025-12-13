@@ -105,6 +105,8 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \
+    trainer.val_before_train=false \
+    trainer.test_freq=-1 \
     "$@"
 
 echo ""
