@@ -181,7 +181,7 @@ Examples:
                        help="Input parquet file path")
     parser.add_argument("--output", type=str, default='data/toolbench/val_filtered.parquet',
                        help="Output parquet file path")
-    parser.add_argument("--max_length", type=int, required=4096,
+    parser.add_argument("--max_length", type=int, default=4096,
                        help="Maximum length threshold")
     parser.add_argument("--method", type=str, default="tokens",
                        choices=["chars", "tokens", "messages"],
