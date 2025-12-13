@@ -454,9 +454,13 @@ class LLMGenerationManager:
         
         if self.config.use_toolbench:
             # ToolBench mode: call APIs
+            print(f"[DEBUG execute_predictions] do_search={do_search}, num_predictions={len(predictions)}, active_mask={active_mask}")
+            print(f"[DEBUG execute_predictions] cur_actions={cur_actions[:3] if len(cur_actions) > 0 else '[]'}...")  # Show first 3
+            
             api_calls = []
             api_indices = []
             for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
+                print(f"[DEBUG execute_predictions] Sample {i}: action={action}, active_mask[{i}]={active_mask[i] if i < len(active_mask) else 'N/A'}")
                 if action and action != 'Finish' and active_mask[i]:
                     original_idx = original_indices[i] if i < len(original_indices) else i
                     api_calls.append({
@@ -466,6 +470,9 @@ class LLMGenerationManager:
                         'content': content_dict
                     })
                     api_indices.append(i)
+                    print(f"[DEBUG execute_predictions] Added API call: index={i}, original_idx={original_idx}, action={action}")
+            
+            print(f"[DEBUG execute_predictions] Total api_calls collected: {len(api_calls)}")
             
             # Batch API calls
             api_results = {}
@@ -473,6 +480,10 @@ class LLMGenerationManager:
                 print(f"[DEBUG] Calling {len(api_calls)} ToolBench APIs...")
                 api_results = self.batch_call_toolbench_apis(api_calls)
                 print(f"[DEBUG] Received {len(api_results)} API responses")
+            elif not do_search:
+                print(f"[DEBUG] Skipping API calls because do_search=False")
+            elif not api_calls:
+                print(f"[DEBUG] No API calls to make (api_calls is empty)")
             
             # Process results
             api_result_idx = 0
@@ -598,7 +609,7 @@ If I want to give the final answer, I should put the answer between <answer> and
         actions = []
         contents = []
                 
-        for prediction in predictions:
+        for idx, prediction in enumerate(predictions):
             if isinstance(prediction, str): # for llm output
                 if self.config.use_toolbench:
                     # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
@@ -607,9 +618,18 @@ If I want to give the final answer, I should put the answer between <answer> and
                     action_start = prediction.find("\nAction: ")
                     action_input_start = prediction.find("\nAction Input: ")
                     
+                    if idx < 2:  # Debug first 2 predictions
+                        print(f"[DEBUG postprocess_predictions] Sample {idx}:")
+                        print(f"  prediction length: {len(prediction)}")
+                        print(f"  thought_start: {thought_start}, action_start: {action_start}, action_input_start: {action_input_start}")
+                        print(f"  prediction preview: {prediction[:200]}...")
+                    
                     if thought_start != -1 and action_start != -1 and action_input_start != -1:
                         action_name = prediction[action_start + len("\nAction: "):action_input_start].strip()
                         action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
+                        
+                        if idx < 2:
+                            print(f"[DEBUG postprocess_predictions] Sample {idx} parsed: action_name={action_name}")
                         
                         # Try to parse JSON - handle both single-line and multi-line JSON
                         action_input = {}
