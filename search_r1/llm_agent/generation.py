@@ -302,29 +302,38 @@ class LLMGenerationManager:
             # Try to get extra_info from non_tensor_batch
             if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
                 extra_info = gen_batch.non_tensor_batch['extra_info']
+                print(f"[DEBUG run_llm_loop] Found extra_info in non_tensor_batch, type={type(extra_info)}, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
                 if isinstance(extra_info, (list, tuple, np.ndarray)) and len(extra_info) == batch_size:
                     for i, info in enumerate(extra_info):
                         if isinstance(info, dict) and 'category' in info:
                             self.sample_categories[i] = info['category']
                         else:
                             self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+                    print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
                 else:
+                    print(f"[DEBUG run_llm_loop] Warning: extra_info length ({len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}) != batch_size ({batch_size})")
                     # Fallback: use default for all
                     for i in range(batch_size):
                         self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
             elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
                 extra_info = gen_batch.meta_info['extra_info']
+                print(f"[DEBUG run_llm_loop] Found extra_info in meta_info, type={type(extra_info)}, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
                 if isinstance(extra_info, (list, tuple)) and len(extra_info) == batch_size:
                     for i, info in enumerate(extra_info):
                         if isinstance(info, dict) and 'category' in info:
                             self.sample_categories[i] = info['category']
                         else:
                             self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+                    print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
                 else:
+                    print(f"[DEBUG run_llm_loop] Warning: extra_info length ({len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}) != batch_size ({batch_size})")
                     # Fallback: use default for all
                     for i in range(batch_size):
                         self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
             else:
+                print(f"[DEBUG run_llm_loop] Warning: No extra_info found in gen_batch. Has non_tensor_batch: {hasattr(gen_batch, 'non_tensor_batch')}, Has meta_info: {hasattr(gen_batch, 'meta_info')}")
+                if hasattr(gen_batch, 'non_tensor_batch'):
+                    print(f"[DEBUG run_llm_loop] non_tensor_batch keys: {list(gen_batch.non_tensor_batch.keys()) if gen_batch.non_tensor_batch else 'empty'}")
                 # Fallback: use default for all
                 for i in range(batch_size):
                     self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')

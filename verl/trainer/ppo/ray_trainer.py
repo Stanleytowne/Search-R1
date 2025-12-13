@@ -512,6 +512,13 @@ class RayPPOTrainer(object):
                     'do_sample': False,
                     'validate': True,
                 }
+                # Copy extra_info from original batch to gen_batch if available
+                if hasattr(test_batch, 'non_tensor_batch') and 'extra_info' in test_batch.non_tensor_batch:
+                    if not hasattr(test_gen_batch, 'non_tensor_batch'):
+                        test_gen_batch.non_tensor_batch = {}
+                    test_gen_batch.non_tensor_batch['extra_info'] = test_batch.non_tensor_batch['extra_info']
+                    print(f"[DEBUG ray_trainer] Copied extra_info to test_gen_batch, length={len(test_batch.non_tensor_batch['extra_info'])}")
+                
                 with _timer('step', timing_raw):
                     first_input_ids = test_gen_batch.batch['input_ids'][:, -gen_config.max_start_length:].clone()
                     with _timer('gen', timing_raw):
@@ -731,6 +738,13 @@ class RayPPOTrainer(object):
                 # with _timer('step', timing_raw):
                     else:
                         first_input_ids = gen_batch.batch['input_ids'][:, -gen_config.max_start_length:].clone().long()
+
+                        # Copy extra_info from original batch to gen_batch if available
+                        if hasattr(batch, 'non_tensor_batch') and 'extra_info' in batch.non_tensor_batch:
+                            if not hasattr(gen_batch, 'non_tensor_batch'):
+                                gen_batch.non_tensor_batch = {}
+                            gen_batch.non_tensor_batch['extra_info'] = batch.non_tensor_batch['extra_info']
+                            print(f"[DEBUG ray_trainer] Copied extra_info to gen_batch, length={len(batch.non_tensor_batch['extra_info'])}")
 
                         with _timer('gen', timing_raw):
                             print(f"[DEBUG ray_trainer] About to call run_llm_loop, use_toolbench={gen_config.use_toolbench}, do_search={self.config.do_search}")
