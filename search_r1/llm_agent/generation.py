@@ -27,7 +27,6 @@ class GenerationConfig:
     use_toolbench: bool = False
     toolbench_url: str = None
     toolbench_key: str = ""
-    default_category: str = "G1_category"  # Default category for ToolBench API calls
 
 class LLMGenerationManager:
     def __init__(
@@ -61,7 +60,6 @@ class LLMGenerationManager:
         # Debug: Print config to verify use_toolbench is set
         print(f"[DEBUG LLMGenerationManager.__init__] use_toolbench={self.config.use_toolbench}")
         print(f"[DEBUG LLMGenerationManager.__init__] toolbench_url={self.config.toolbench_url}")
-        print(f"[DEBUG LLMGenerationManager.__init__] default_category={getattr(self.config, 'default_category', 'N/A')}")
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
@@ -297,48 +295,42 @@ class LLMGenerationManager:
             batch_size = gen_batch.batch['input_ids'].shape[0]
             self.api_call_history = {i: [] for i in range(batch_size)}
             self.finish_call_history = {i: None for i in range(batch_size)}
-            # Extract category from extra_info for each sample
+            # Extract category and API list from extra_info for each sample
             self.sample_categories = {}
-            # Try to get extra_info from non_tensor_batch
+            self.sample_api_lists = {}  # Store API validation info for each sample
+            
+            # Get extra_info from non_tensor_batch or meta_info
+            extra_info = None
             if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
                 extra_info = gen_batch.non_tensor_batch['extra_info']
-                print(f"[DEBUG run_llm_loop] Found extra_info in non_tensor_batch, type={type(extra_info)}, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
-                if isinstance(extra_info, (list, tuple, np.ndarray)) and len(extra_info) == batch_size:
-                    for i, info in enumerate(extra_info):
-                        if isinstance(info, dict) and 'category' in info:
-                            self.sample_categories[i] = info['category']
-                        else:
-                            self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
-                    print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
-                else:
-                    print(f"[DEBUG run_llm_loop] Warning: extra_info length ({len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}) != batch_size ({batch_size})")
-                    # Fallback: use default for all
-                    for i in range(batch_size):
-                        self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
+                print(f"[DEBUG run_llm_loop] Found extra_info in non_tensor_batch, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
             elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
                 extra_info = gen_batch.meta_info['extra_info']
-                print(f"[DEBUG run_llm_loop] Found extra_info in meta_info, type={type(extra_info)}, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
-                if isinstance(extra_info, (list, tuple)) and len(extra_info) == batch_size:
-                    for i, info in enumerate(extra_info):
-                        if isinstance(info, dict) and 'category' in info:
-                            self.sample_categories[i] = info['category']
-                        else:
-                            self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
-                    print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
-                else:
-                    print(f"[DEBUG run_llm_loop] Warning: extra_info length ({len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}) != batch_size ({batch_size})")
-                    # Fallback: use default for all
-                    for i in range(batch_size):
-                        self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
-            else:
-                print(f"[DEBUG run_llm_loop] Warning: No extra_info found in gen_batch. Has non_tensor_batch: {hasattr(gen_batch, 'non_tensor_batch')}, Has meta_info: {hasattr(gen_batch, 'meta_info')}")
-                if hasattr(gen_batch, 'non_tensor_batch'):
-                    print(f"[DEBUG run_llm_loop] non_tensor_batch keys: {list(gen_batch.non_tensor_batch.keys()) if gen_batch.non_tensor_batch else 'empty'}")
-                # Fallback: use default for all
-                for i in range(batch_size):
-                    self.sample_categories[i] = getattr(self.config, 'default_category', 'G1_category')
-            print(f"[DEBUG run_llm_loop] Initialized api_call_history and finish_call_history for {batch_size} samples")
-            print(f"[DEBUG run_llm_loop] Sample categories: {dict(list(self.sample_categories.items())[:5])}...")  # Show first 5
+                print(f"[DEBUG run_llm_loop] Found extra_info in meta_info, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
+            
+            if extra_info is None:
+                raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
+            
+            if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
+                raise ValueError(f"Invalid extra_info: expected list/tuple/array of length {batch_size}, got {type(extra_info)} with length {len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
+            
+            # Extract category and API list for each sample
+            for i, info in enumerate(extra_info):
+                if not isinstance(info, dict):
+                    raise ValueError(f"Sample {i}: extra_info[{i}] is not a dict, got {type(info)}")
+                
+                if 'category' not in info:
+                    raise ValueError(f"Sample {i}: Missing 'category' in extra_info. Required for ToolBench API calls.")
+                
+                self.sample_categories[i] = info['category']
+                
+                # Extract API list for validation (optional)
+                if 'api_list' in info and info['api_list'] is not None:
+                    self.sample_api_lists[i] = info['api_list']
+            
+            print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
+            print(f"[DEBUG run_llm_loop] Successfully extracted API lists from {len(self.sample_api_lists)} samples")
+            print(f"[DEBUG run_llm_loop] Sample categories: {dict(list(self.sample_categories.items())[:5])}...")
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -784,6 +776,56 @@ If I want to give the final answer, I should put the answer between <answer> and
 
         return format_reference
     
+    def _validate_api_call(self, action_name: str, action_input: dict, sample_idx: int) -> Optional[str]:
+        """
+        Validate API call before sending to server.
+        
+        Args:
+            action_name: API name (format: api_name_for_tool_name)
+            action_input: API input parameters
+            sample_idx: Sample index (to get API list for this sample)
+        
+        Returns:
+            Error message if validation fails, None if validation passes
+        """
+        # Get API list for this sample
+        if not hasattr(self, 'sample_api_lists') or sample_idx not in self.sample_api_lists:
+            # If no API list, skip validation (backward compatibility)
+            return None
+        
+        api_list = self.sample_api_lists[sample_idx]
+        
+        # Check if API name exists
+        if action_name not in api_list:
+            available_apis = list(api_list.keys())
+            return f"Invalid API name: '{action_name}'. Available APIs: {available_apis[:5]}..."
+        
+        # Get API validation info
+        api_info = api_list[action_name]
+        required_params = api_info.get('required_params', [])
+        all_params = api_info.get('all_params', [])
+        
+        # Check required parameters
+        if not isinstance(action_input, dict):
+            return f"Invalid action_input: expected dict, got {type(action_input)}"
+        
+        provided_params = set(action_input.keys())
+        required_params_set = set(required_params)
+        all_params_set = set(all_params)
+        
+        # Check for missing required parameters
+        missing_params = required_params_set - provided_params
+        if missing_params:
+            return f"Missing required parameters: {list(missing_params)}. Required: {required_params}"
+        
+        # Check for unknown parameters (strict mode: only allow known parameters)
+        unknown_params = provided_params - all_params_set
+        if unknown_params and len(all_params) > 0:
+            return f"Unknown parameters: {list(unknown_params)}. Valid parameters: {all_params}"
+        
+        # Validation passed
+        return None
+    
     def extract_api_info_from_prompt(self, prompt_text: str) -> Dict[str, Any]:
         """
         Extract API information from the system message in the prompt.
@@ -854,13 +896,22 @@ If I want to give the final answer, I should put the answer between <answer> and
                 api_name = action_name
                 tool_name = 'unknown'
             
-            # Extract category from sample's extra_info if available
+            # Extract category from sample's extra_info
             # Map original_index to category
             original_idx = api_call.get('original_index', idx)
-            category = getattr(self, 'sample_categories', {}).get(original_idx, None)
-            if category is None:
-                # Fallback to default
-                category = getattr(self.config, 'default_category', 'G1_category')
+            if not hasattr(self, 'sample_categories') or original_idx not in self.sample_categories:
+                raise ValueError(f"Missing category for sample {original_idx}. Category must be provided in extra_info.")
+            category = self.sample_categories[original_idx]
+            
+            # Validate API call before sending to server
+            validation_error = self._validate_api_call(action_name, action_input, original_idx)
+            if validation_error:
+                results[idx] = {
+                    'error': validation_error,
+                    'response': ''
+                }
+                print(f"[DEBUG] API call validation failed: {validation_error}")
+                continue
             
             # Call ToolBench server
             try:

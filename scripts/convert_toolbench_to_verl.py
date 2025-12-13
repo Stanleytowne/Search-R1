@@ -1,16 +1,16 @@
 #!/usr/bin/env python
 """
-将StableToolBench的数据格式转换为verl训练所需的parquet格式
+将StableToolBench的G1_query.json格式转换为verl训练所需的parquet格式
 
-输入格式：StableToolBench JSON文件
-- 每个样本包含id和conversations数组
-- conversations包含system, user, assistant, function消息
+输入格式：G1_query.json
+- 每个样本包含api_list和query
+- api_list包含API信息（category_name, tool_name, api_name等）
 
 输出格式：parquet文件
 - prompt: chat格式（列表字典，每个元素有from和value）
 - data_source: 数据来源标识
-- reward_model: reward相关信息（可选）
-- extra_info: 额外信息（包含index等）
+- reward_model: reward相关信息
+- extra_info: 额外信息（包含index, category, api_list用于验证）
 """
 
 import json
@@ -241,94 +241,15 @@ def convert_conversations_to_chat(conversations: List[Dict]) -> List[Dict]:
     return chat
 
 
-def extract_category_from_conversations(conversations: List[Dict], tools_folder: str = None) -> str:
-    """
-    从conversations的system message中提取category信息
-    
-    方法：
-    1. 从system message中解析API列表（格式：Specifically, you have access to the following APIs: [...]）
-    2. 从API名称中提取tool_name（格式：api_name_for_tool_name）
-    3. 根据tool_name在tools目录中查找对应的category
-    
-    Args:
-        conversations: 对话列表
-        tools_folder: tools目录路径（可选，用于查找category）
-    
-    Returns:
-        category名称，如果找不到则返回默认值
-    """
-    import re
-    import os
-    import json
-    
-    # 默认category
-    default_category = "G1_category"
-    
-    # 查找system message
-    system_msg = None
-    for conv in conversations:
-        if conv.get("from") == "system" or conv.get("role") == "system":
-            system_msg = conv.get("value", "") or conv.get("content", "")
-            break
-    
-    if not system_msg:
-        return default_category
-    
-    # 尝试从system message中提取API列表
-    try:
-        # 查找API列表：Specifically, you have access to the following APIs: [...]
-        api_match = re.search(r'Specifically, you have access to the following APIs:\s*(\[.*?\])', system_msg, re.DOTALL)
-        if api_match:
-            api_list_str = api_match.group(1)
-            api_list = json.loads(api_list_str)
-            
-            if len(api_list) > 0:
-                # 从第一个API中提取tool_name（跳过Finish函数）
-                for api_info in api_list:
-                    api_name = api_info.get('name', '')
-                    if api_name == 'Finish':
-                        continue
-                    if '_for_' in api_name:
-                        tool_name = api_name.rsplit('_for_', 1)[-1]
-                        
-                        # 如果提供了tools_folder，尝试查找category
-                        if tools_folder and os.path.exists(tools_folder):
-                            # 遍历所有category目录，查找包含该tool_name的JSON文件
-                            for category_dir in os.listdir(tools_folder):
-                                category_path = os.path.join(tools_folder, category_dir)
-                                if os.path.isdir(category_path):
-                                    # 查找tool_name.json文件
-                                    tool_file = os.path.join(category_path, f"{tool_name}.json")
-                                    if os.path.exists(tool_file):
-                                        return category_dir  # 返回找到的category
-                            
-                            # 如果找不到精确匹配，尝试标准化tool_name
-                            # 注意：这里不能直接import utils，因为可能不在同一路径
-                            # 使用简单的标准化：转小写，替换空格为下划线
-                            standardized_tool_name = tool_name.lower().replace(' ', '_')
-                            for category_dir in os.listdir(tools_folder):
-                                category_path = os.path.join(tools_folder, category_dir)
-                                if os.path.isdir(category_path):
-                                    for json_file in os.listdir(category_path):
-                                        if json_file.endswith('.json'):
-                                            file_base = os.path.splitext(json_file)[0]
-                                            if file_base.lower().replace(' ', '_') == standardized_tool_name:
-                                                return category_dir
-                        # 如果找不到，返回默认值
-                        break
-    except Exception as e:
-        print(f"Warning: Failed to extract category from conversations: {e}")
-    
-    return default_category
 
 
 def process_toolbench_json(input_file: str = None, output_file: str = None, 
                           max_samples: int = None, data: List[Dict] = None):
     """
-    处理StableToolBench JSON文件并转换为parquet格式
+    处理G1_query.json格式并转换为parquet格式
     
     Args:
-        input_file: 输入的JSON文件路径（如果data为None）
+        input_file: 输入的G1_query.json文件路径（如果data为None）
         output_file: 输出的parquet文件路径
         max_samples: 最大处理样本数（用于测试）
         data: 直接提供的数据（如果input_file为None）
@@ -352,43 +273,42 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
     records = []
     
     for idx, sample in enumerate(data):
-        # 检查数据格式：如果是G1_query.json格式（有api_list和query），需要转换
-        if 'api_list' in sample and 'query' in sample:
-            # G1_query.json格式：需要构造conversations
-            sample_id = sample.get("query_id", f"sample_{idx}")
-            conversations = convert_g1_query_to_conversations(sample)
-            
-            # 从api_list中提取category（取第一个API的category_name）
-            category = "G1_category"  # 默认值
-            api_list = sample.get('api_list', [])
-            if api_list and len(api_list) > 0:
-                category = api_list[0].get('category_name', 'G1_category')
-        else:
-            # toolllama_G123_dfs_eval.json格式：已经有conversations
-            sample_id = sample.get("id", f"sample_{idx}")
-            conversations = sample.get("conversations", [])
-            
-            if not conversations:
-                print(f"Warning: Sample {idx} has no conversations, skipping")
+        # G1_query.json格式：必须有api_list和query
+        if 'api_list' not in sample or 'query' not in sample:
+            print(f"Warning: Sample {idx} missing 'api_list' or 'query', skipping")
+            continue
+        
+        # 构造conversations
+        sample_id = sample.get("query_id", f"sample_{idx}")
+        conversations = convert_g1_query_to_conversations(sample)
+        
+        # 从api_list中提取category（取第一个API的category_name）
+        category = "G1_category"  # 默认值
+        api_list = sample.get('api_list', [])
+        if api_list and len(api_list) > 0:
+            category = api_list[0].get('category_name', 'G1_category')
+        
+        # 转换API列表格式并存储到extra_info中（用于验证）
+        _, api_list_formatted = convert_api_list_to_system_format(api_list)
+        # 创建API验证字典：{api_name: {required_params: [...], optional_params: [...]}}
+        api_validation_info = {}
+        for api in api_list_formatted:
+            api_name = api.get('name', '')
+            if api_name == 'Finish':
                 continue
-            
-            # 提取category（用于ToolBench API调用）
-            # 尝试从conversations的system message中提取category
-            tools_folder = os.environ.get('TOOLS_FOLDER', None)
-            if not tools_folder:
-                # 尝试从相对路径查找
-                possible_paths = [
-                    '../../StableToolBench/data/toolenv/tools',
-                    '../StableToolBench/data/toolenv/tools',
-                    'StableToolBench/data/toolenv/tools'
-                ]
-                for path in possible_paths:
-                    abs_path = os.path.abspath(os.path.join(os.path.dirname(__file__), path))
-                    if os.path.exists(abs_path):
-                        tools_folder = abs_path
-                        break
-            
-            category = extract_category_from_conversations(conversations, tools_folder)
+            params = api.get('parameters', {})
+            required = params.get('required', [])
+            optional = params.get('optional', [])
+            properties = params.get('properties', {})
+            # 计算所有参数（包括optional）
+            all_params = list(properties.keys()) if isinstance(properties, dict) else []
+            api_validation_info[api_name] = {
+                'required_params': required,
+                'optional_params': optional,
+                'all_params': all_params,
+                'required_count': len(required),
+                'total_param_count': len(all_params)
+            }
         
         # 转换为chat格式
         chat = convert_conversations_to_chat(conversations)
@@ -408,7 +328,8 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
             "extra_info": {
                 "index": idx,
                 "sample_id": sample_id,
-                "category": category
+                "category": category,
+                "api_list": api_validation_info
             }
         }
         
