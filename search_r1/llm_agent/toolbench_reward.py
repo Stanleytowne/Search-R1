@@ -87,7 +87,7 @@ class ToolBenchRewardManager:
             # 解码response
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
-            if os.environ.get('RANK') == '0':
+            if i == 0:
                 print("#" * 30)
                 print(self.tokenizer.decode(data_item.batch['prompts']))
                 print("#" * 30)
