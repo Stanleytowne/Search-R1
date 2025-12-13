@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 """
-将StableToolBench的G1_query.json格式转换为verl训练所需的parquet格式
+Convert StableToolBench G1_query.json format to verl training parquet format.
 
-输入格式：G1_query.json
-- 每个样本包含api_list和query
-- api_list包含API信息（category_name, tool_name, api_name等）
+Input format: G1_query.json
+- Each sample contains api_list and query
+- api_list contains API information (category_name, tool_name, api_name, etc.)
 
-输出格式：parquet文件
-- prompt: chat格式（列表字典，每个元素有from和value）
-- data_source: 数据来源标识
-- reward_model: reward相关信息
-- extra_info: 额外信息（包含index, category, api_list用于验证）
+Output format: parquet file
+- prompt: chat format (list of dicts, each with from and value)
+- data_source: data source identifier
+- reward_model: reward related information
+- extra_info: additional information (index, category, api_list for validation)
+  Note: api_list in extra_info only contains APIs from this sample, not the entire category
 """
 
 import json
@@ -52,22 +53,22 @@ Specifically, you have access to the following APIs: {api_list}"""
 
 def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[Dict]]:
     """
-    将G1_query.json格式的api_list转换为system message中需要的格式
+    Convert G1_query.json format api_list to system message format.
     
     Args:
-        api_list: G1_query.json格式的API列表，每个元素包含：
-            - category_name: category名称
-            - tool_name: 工具名称
-            - api_name: API名称
-            - api_description: API描述
-            - required_parameters: 必需参数
-            - optional_parameters: 可选参数
-            - method: HTTP方法
+        api_list: G1_query.json format API list, each element contains:
+            - category_name: category name
+            - tool_name: tool name
+            - api_name: API name
+            - api_description: API description
+            - required_parameters: required parameters
+            - optional_parameters: optional parameters
+            - method: HTTP method
     
     Returns:
         (tool_descriptions, api_list_formatted): 
-        - tool_descriptions: 工具描述字符串
-        - api_list_formatted: 格式化后的API列表（用于JSON序列化）
+        - tool_descriptions: tool description string
+        - api_list_formatted: formatted API list (for JSON serialization)
     """
     # 收集工具描述
     tool_descriptions = []
@@ -174,18 +175,18 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
 
 def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
     """
-    将G1_query.json格式的样本转换为conversations格式
+    Convert G1_query.json format sample to conversations format.
     
     Args:
-        sample: G1_query.json格式的样本，包含：
-            - api_list: API列表
-            - query: 用户查询
+        sample: G1_query.json format sample, contains:
+            - api_list: API list (only APIs for this sample)
+            - query: user query
     
     Returns:
-        conversations: 对话列表，格式类似toolllama_G123_dfs_eval.json
+        conversations: conversation list, similar to toolllama_G123_dfs_eval.json format
     """
-    api_list = sample.get('api_list', [])
-    query = sample.get('query', '')
+    api_list = sample['api_list']
+    query = sample['query']
     
     # 转换API列表格式
     tool_descriptions, api_list_formatted = convert_api_list_to_system_format(api_list)
@@ -209,36 +210,7 @@ def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
         }
     ]
     
-    return conversations
-
-
-def convert_conversations_to_chat(conversations: List[Dict]) -> List[Dict]:
-    """
-    将StableToolBench的conversations转换为chat格式
-    
-    StableToolBench格式：
-    - {"from": "system", "value": "..."}
-    - {"from": "user", "value": "..."}
-    - {"from": "assistant", "value": "..."}
-    - {"from": "function", "value": "..."}
-    
-    verl需要的格式：
-    - 相同的格式，但需要确保格式正确
-    """
-    chat = []
-    for conv in conversations:
-        role = conv.get("from", "")
-        value = conv.get("value", "")
-        
-        # 确保role和value都存在
-        if role and value:
-            chat.append({
-                "role": role,  # verl可能使用role而不是from
-                "from": role,  # 保留from以兼容
-                "content": value  # 某些tokenizer使用content
-            })
-    
-    return chat
+    return conversations, api_list_formatted
 
 
 
@@ -246,13 +218,13 @@ def convert_conversations_to_chat(conversations: List[Dict]) -> List[Dict]:
 def process_toolbench_json(input_file: str = None, output_file: str = None, 
                           max_samples: int = None, data: List[Dict] = None):
     """
-    处理G1_query.json格式并转换为parquet格式
+    Process G1_query.json format and convert to parquet format.
     
     Args:
-        input_file: 输入的G1_query.json文件路径（如果data为None）
-        output_file: 输出的parquet文件路径
-        max_samples: 最大处理样本数（用于测试）
-        data: 直接提供的数据（如果input_file为None）
+        input_file: Input G1_query.json file path (if data is None)
+        output_file: Output parquet file path
+        max_samples: Maximum number of samples to process (for testing)
+        data: Directly provided data (if input_file is None)
     """
     if data is None:
         if input_file is None:
@@ -265,71 +237,56 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
     
     print(f"Found {len(data)} samples")
     
-    # 限制样本数（用于测试）
     if max_samples and max_samples > 0:
         data = data[:max_samples]
         print(f"Processing first {len(data)} samples")
     
     records = []
     
-    for idx, sample in enumerate(data):
-        # G1_query.json格式：必须有api_list和query
-        if 'api_list' not in sample or 'query' not in sample:
-            print(f"Warning: Sample {idx} missing 'api_list' or 'query', skipping")
-            continue
+    for idx, sample in enumerate(data):        
+        # Get api_list from this sample only (not the entire category)
+        api_list = sample['api_list']
         
-        # 构造conversations
-        sample_id = sample.get("query_id", f"sample_{idx}")
-        conversations = convert_g1_query_to_conversations(sample)
+        # Construct conversations
+        sample_id = sample["query_id"]
+        conversations, api_list_formatted = convert_g1_query_to_conversations(sample)
         
-        # 从api_list中提取category（取第一个API的category_name）
-        category = "G1_category"  # 默认值
-        api_list = sample.get('api_list', [])
-        if api_list and len(api_list) > 0:
-            category = api_list[0].get('category_name', 'G1_category')
+        # Extract category from api_list (use first API's category_name)
+        category = api_list[0]['category_name']
         
-        # 转换API列表格式并存储到extra_info中（用于验证）
-        _, api_list_formatted = convert_api_list_to_system_format(api_list)
-        # 创建API验证字典：{api_name: {required_params: [...], optional_params: [...]}}
-        api_validation_info = {}
+        # Build API validation info in simplified format for parquet storage
+        # Format: {"api": "api1,api2,api3", "n_required_param": "0,1,2", "n_optional_param": "0,2,1"}
+        api_names = []
+        n_required_list = []
+        n_optional_list = []
+        
         for api in api_list_formatted:
             api_name = api.get('name', '')
             if api_name == 'Finish':
-                continue
+                continue  # Skip Finish function
+            
+            api_names.append(api_name)
             params = api.get('parameters', {})
             required = params.get('required', [])
             optional = params.get('optional', [])
-            properties = params.get('properties', {})
-            # 计算所有参数（包括optional）
-            all_params = list(properties.keys()) if isinstance(properties, dict) else []
-            api_validation_info[api_name] = {
-                'required_params': required,
-                'optional_params': optional,
-                'all_params': all_params,
-                'required_count': len(required),
-                'total_param_count': len(all_params)
-            }
+            n_required_list.append(str(len(required)))
+            n_optional_list.append(str(len(optional)))
         
-        # 转换为chat格式
-        chat = convert_conversations_to_chat(conversations)
-        
-        if not chat:
-            print(f"Warning: Sample {idx} has empty chat, skipping")
-            continue
-        
-        # 构建记录
+        # Build record
         record = {
-            "prompt": chat,  # verl需要的prompt列
-            "data_source": "toolbench",  # 数据来源标识
-            "reward_model": {  # reward相关信息
-                "style": "function",  # 使用function-based reward
-                "ground_truth": None  # ToolBench不需要ground truth
+            "prompt": conversations,  # verl required prompt column
+            "data_source": "toolbench",  # data source identifier
+            "reward_model": {  # reward related information
+                "style": "function",  # use function-based reward
+                "ground_truth": None  # ToolBench doesn't need ground truth
             },
             "extra_info": {
                 "index": idx,
                 "sample_id": sample_id,
                 "category": category,
-                "api_list": api_validation_info
+                "api": ",".join(api_names),  # Comma-separated API names
+                "n_required_param": ",".join(n_required_list),  # Comma-separated required param counts
+                "n_optional_param": ",".join(n_optional_list)   # Comma-separated optional param counts
             }
         }
         
@@ -338,13 +295,11 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
         if (idx + 1) % 1000 == 0:
             print(f"Processed {idx + 1} samples...")
     
-    # 创建DataFrame
     df = pd.DataFrame(records)
     
     print(f"\nTotal records: {len(df)}")
     print(f"Columns: {df.columns.tolist()}")
     
-    # 保存为parquet
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
@@ -352,28 +307,10 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
     df.to_parquet(output_file, index=False, engine='pyarrow')
     
     print(f"✓ Successfully converted {len(df)} samples to {output_file}")
-    
-    # 打印示例
-    if len(df) > 0:
-        print("\nExample record:")
-        example = df.iloc[0]
-        print(f"  Sample ID: {example['extra_info']['sample_id']}")
-        print(f"  Chat length: {len(example['prompt'])} messages")
-        print(f"  First message role: {example['prompt'][0].get('role', example['prompt'][0].get('from', 'unknown'))}")
 
 
 def split_train_val(input_file: str, train_output: str, val_output: str, 
                     train_ratio: float = 0.9, max_samples: int = None):
-    """
-    将数据分割为训练集和验证集
-    
-    Args:
-        input_file: 输入的JSON文件路径
-        train_output: 训练集输出路径
-        val_output: 验证集输出路径
-        train_ratio: 训练集比例
-        max_samples: 最大处理样本数
-    """
     print(f"Reading {input_file}...")
     
     with open(input_file, 'r', encoding='utf-8') as f:
@@ -381,23 +318,19 @@ def split_train_val(input_file: str, train_output: str, val_output: str,
     
     print(f"Found {len(data)} samples")
     
-    # 限制样本数
     if max_samples and max_samples > 0:
         data = data[:max_samples]
         print(f"Processing first {len(data)} samples")
     
-    # 随机打乱（可选，但推荐）
     random.seed(42)
     random.shuffle(data)
     
-    # 分割数据
     split_idx = int(len(data) * train_ratio)
     train_data = data[:split_idx]
     val_data = data[split_idx:]
     
     print(f"\nSplitting: {len(train_data)} train, {len(val_data)} val")
     
-    # 处理训练集
     print("\nProcessing training set...")
     process_toolbench_json(
         input_file=None,
@@ -406,7 +339,6 @@ def split_train_val(input_file: str, train_output: str, val_output: str,
         data=train_data
     )
     
-    # 处理验证集
     print("\nProcessing validation set...")
     process_toolbench_json(
         input_file=None,
@@ -428,15 +360,14 @@ def main():
                        help="Split into train/val sets")
     parser.add_argument("--train_ratio", type=float, default=0.9,
                        help="Ratio of training data (when using --split)")
-    parser.add_argument("--train_output", type=str, default=None,
+    parser.add_argument("--train_output", type=str, default='data/toolbench/train.parquet',
                        help="Training set output path (when using --split)")
-    parser.add_argument("--val_output", type=str, default=None,
+    parser.add_argument("--val_output", type=str, default='data/toolbench/val.parquet',
                        help="Validation set output path (when using --split)")
     
     args = parser.parse_args()
     
     if args.split:
-        # 分割模式
         train_output = args.train_output or args.output.replace(".parquet", "_train.parquet")
         val_output = args.val_output or args.output.replace(".parquet", "_val.parquet")
         
@@ -448,7 +379,6 @@ def main():
             max_samples=args.max_samples
         )
     else:
-        # 单文件模式
         process_toolbench_json(
             input_file=args.input,
             output_file=args.output,

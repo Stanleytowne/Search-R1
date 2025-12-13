@@ -314,7 +314,7 @@ class LLMGenerationManager:
             if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
                 raise ValueError(f"Invalid extra_info: expected list/tuple/array of length {batch_size}, got {type(extra_info)} with length {len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
             
-            # Extract category and API list for each sample
+            # Extract category and API info for each sample
             for i, info in enumerate(extra_info):
                 if not isinstance(info, dict):
                     raise ValueError(f"Sample {i}: extra_info[{i}] is not a dict, got {type(info)}")
@@ -324,9 +324,29 @@ class LLMGenerationManager:
                 
                 self.sample_categories[i] = info['category']
                 
-                # Extract API list for validation (optional)
-                if 'api_list' in info and info['api_list'] is not None:
-                    self.sample_api_lists[i] = info['api_list']
+                # Extract API validation info (simplified format: api, n_required_param, n_optional_param)
+                if 'api' in info and info['api']:
+                    # Parse comma-separated API names and counts
+                    api_names = [name.strip() for name in info['api'].split(',') if name.strip()]
+                    n_required_str = info.get('n_required_param', '')
+                    n_optional_str = info.get('n_optional_param', '')
+                    
+                    # Parse comma-separated counts
+                    n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
+                    n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
+                    
+                    # Build API validation dict
+                    api_validation_info = {}
+                    for idx_api, api_name in enumerate(api_names):
+                        required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
+                        optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
+                        api_validation_info[api_name] = {
+                            'required_count': required_count,
+                            'optional_count': optional_count
+                        }
+                    
+                    if api_validation_info:
+                        self.sample_api_lists[i] = api_validation_info
             
             print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
             print(f"[DEBUG run_llm_loop] Successfully extracted API lists from {len(self.sample_api_lists)} samples")
@@ -800,28 +820,25 @@ If I want to give the final answer, I should put the answer between <answer> and
             available_apis = list(api_list.keys())
             return f"Invalid API name: '{action_name}'. Available APIs: {available_apis[:5]}..."
         
-        # Get API validation info
+        # Get API validation info (simplified format)
         api_info = api_list[action_name]
-        required_params = api_info.get('required_params', [])
-        all_params = api_info.get('all_params', [])
+        required_count = api_info.get('required_count', 0)
+        optional_count = api_info.get('optional_count', 0)
         
-        # Check required parameters
+        # Check required parameters count
         if not isinstance(action_input, dict):
             return f"Invalid action_input: expected dict, got {type(action_input)}"
         
-        provided_params = set(action_input.keys())
-        required_params_set = set(required_params)
-        all_params_set = set(all_params)
+        provided_param_count = len(action_input)
         
-        # Check for missing required parameters
-        missing_params = required_params_set - provided_params
-        if missing_params:
-            return f"Missing required parameters: {list(missing_params)}. Required: {required_params}"
+        # Check if required parameters are provided
+        if provided_param_count < required_count:
+            return f"Missing required parameters: expected at least {required_count}, got {provided_param_count}"
         
-        # Check for unknown parameters (strict mode: only allow known parameters)
-        unknown_params = provided_params - all_params_set
-        if unknown_params and len(all_params) > 0:
-            return f"Unknown parameters: {list(unknown_params)}. Valid parameters: {all_params}"
+        # Check if too many parameters (strict mode: only allow required + optional)
+        max_allowed = required_count + optional_count
+        if max_allowed > 0 and provided_param_count > max_allowed:
+            return f"Too many parameters: expected at most {max_allowed} (required: {required_count}, optional: {optional_count}), got {provided_param_count}"
         
         # Validation passed
         return None
