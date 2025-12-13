@@ -82,9 +82,18 @@ class ToolBenchRewardManager:
             prompt_length = data_item.batch['prompts'].shape[-1]
             valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum().item()
             valid_response_ids = response_ids[:valid_response_length]
-            
+
             # 解码response
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
+            
+            if os.environ.get('RANK') == '0':
+                print("#" * 30)
+                print(self.tokenizer.decode(data_item.batch['prompts']))
+                print("#" * 30)
+                print(self.tokenizer.decode(data_item.batch['responses']))
+                print("#" * 30)
+                print(response_str)
+                print("#" * 30)
             
             # 移除</s> token（如果存在）
             response_str = response_str.replace('</s>', '').strip()
