@@ -12,6 +12,25 @@ import requests
 import json
 import numpy as np
 
+
+def normalize_api_name(api_name: str) -> str:
+    """
+    Normalize API name: convert to lowercase and replace spaces with underscores.
+    Special case: "Finish" is not normalized (it's a special function name).
+    
+    Args:
+        api_name: Original API name (e.g., "Get Company Data by LinkedIn URL_for_fresh_linkedin_profile_data")
+    
+    Returns:
+        Normalized API name (e.g., "get_company_data_by_linkedin_url_for_fresh_linkedin_profile_data")
+    """
+    if not api_name:
+        return api_name
+    # Don't normalize "Finish" - it's a special function name
+    if api_name.strip() == "Finish":
+        return "Finish"
+    return api_name.lower().replace(' ', '_')
+
 @dataclass
 class GenerationConfig:
     max_turns: int
@@ -328,12 +347,13 @@ class LLMGenerationManager:
                     n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
                     n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
                     
-                    # Build API validation dict
+                    # Build API validation dict (normalize API names)
                     api_validation_info = {}
                     for idx_api, api_name in enumerate(api_names):
+                        normalized_name = normalize_api_name(api_name)
                         required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
                         optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
-                        api_validation_info[api_name] = {
+                        api_validation_info[normalized_name] = {
                             'required_count': required_count,
                             'optional_count': optional_count
                         }
@@ -580,11 +600,11 @@ class LLMGenerationManager:
                         self.api_call_history[original_idx] = [has_error]
                     
                     # Format as function response (matching StableToolBench format)
-                    # In StableToolBench, function response is a JSON string: {"error": "", "response": "..."}
-                    # This will be added to the conversation as a "function" role message
-                    function_response = json.dumps({"error": error, "response": response}, ensure_ascii=False)
-                    # The format should match what's in the data file: just the JSON string
-                    next_obs.append(function_response)
+                    # In StableToolBench, function response format is: "Function: {json_string}\n"
+                    # The JSON string format is: {"error": "", "response": "..."}
+                    function_response_json = json.dumps({"error": error, "response": response}, ensure_ascii=False)
+                    # Match StableToolBench format: "Function: {content}\n" (as in tool_llama_model.py line 117)
+                    next_obs.append(f"Function: {function_response_json}\n")
                     dones.append(0)
                     valid_action.append(1)
                     is_search.append(1)  # Treat API calls as search-like operations
@@ -663,7 +683,9 @@ If I want to give the final answer, I should put the answer between <answer> and
                     action_input_start = prediction.find("\nAction Input: ")
                     
                     if thought_start != -1 and action_start != -1 and action_input_start != -1:
-                        action_name = prediction[action_start + len("\nAction: "):action_input_start].strip()
+                        action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
+                        # Normalize API name: convert to lowercase and replace spaces with underscores
+                        action_name = normalize_api_name(action_name_raw)
                         action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
                         
                         # Try to parse JSON - handle both single-line and multi-line JSON
@@ -779,6 +801,8 @@ If I want to give the final answer, I should put the answer between <answer> and
             # If no API list, skip validation (backward compatibility)
             return None
         
+        # Ensure action_name is normalized
+        action_name = normalize_api_name(action_name)
         api_list = self.sample_api_lists[sample_idx]
         
         # Check if API name exists
@@ -828,8 +852,10 @@ If I want to give the final answer, I should put the answer between <answer> and
                 api_list = json.loads(api_list_str)
                 
                 for api in api_list:
-                    api_name = api.get('name', '')
-                    if api_name:
+                    api_name_raw = api.get('name', '')
+                    if api_name_raw:
+                        # Normalize API name
+                        api_name = normalize_api_name(api_name_raw)
                         api_info[api_name] = {
                             'name': api_name,
                             'description': api.get('description', ''),
@@ -854,15 +880,17 @@ If I want to give the final answer, I should put the answer between <answer> and
         
         for api_call in api_calls:
             idx = api_call['index']
-            action_name = api_call['action']
+            action_name_raw = api_call['action']
+            # Normalize API name: convert to lowercase and replace spaces with underscores
+            action_name = normalize_api_name(action_name_raw)
             content_dict = api_call['content']
             action_input = content_dict.get('action_input', {})
             
             # Extract tool_name and api_name from action_name
-            # Format in StableToolBench: api_name_for_tool_name
-            # Example: racecards_for_greyhound_racing_uk
-            #   -> api_name: racecards
-            #   -> tool_name: greyhound_racing_uk
+            # Format in StableToolBench: api_name_for_tool_name (normalized)
+            # Example: get_company_data_by_linkedin_url_for_fresh_linkedin_profile_data
+            #   -> api_name: get_company_data_by_linkedin_url
+            #   -> tool_name: fresh_linkedin_profile_data
             if '_for_' in action_name:
                 # Split on '_for_' - the last part is the tool_name
                 parts = action_name.rsplit('_for_', 1)
@@ -915,7 +943,6 @@ If I want to give the final answer, I should put the answer between <answer> and
                 
                 if response.status_code == 200:
                     results[idx] = response.json()
-                    print(f"[DEBUG] API call success: error='{results[idx].get('error', '')}', response_length={len(str(results[idx].get('response', '')))}")
                 else:
                     results[idx] = {
                         'error': f'API call failed with status {response.status_code}',

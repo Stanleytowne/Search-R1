@@ -22,6 +22,25 @@ from typing import List, Dict, Any, Optional
 import os
 import random
 
+def normalize_api_name(api_name: str) -> str:
+    """
+    Normalize API name: convert to lowercase and replace spaces with underscores.
+    Special case: "Finish" is not normalized (it's a special function name).
+    
+    Args:
+        api_name: Original API name (e.g., "Get Company Data by LinkedIn URL_for_fresh_linkedin_profile_data")
+    
+    Returns:
+        Normalized API name (e.g., "get_company_data_by_linkedin_url_for_fresh_linkedin_profile_data")
+    """
+    if not api_name:
+        return api_name
+    # Don't normalize "Finish" - it's a special function name
+    if api_name.strip() == "Finish":
+        return "Finish"
+    return api_name.lower().replace(' ', '_')
+
+
 SYSTEM_PROMPT_TEMPLATE = """You are AutoGPT, you can use many tools(functions) to do the following task.
 
 First you will be given the task description, and then your task starts.
@@ -83,8 +102,11 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
         category_name = api.get('category_name', '')
         api_description = api.get('api_description', '').strip()
         
-        # 构建API名称（格式：api_name_for_tool_name）
-        formatted_api_name = f"{api_name}_for_{tool_name.lower().replace(' ', '_')}"
+        # Build API name (format: api_name_for_tool_name)
+        # Normalize both api_name and tool_name
+        normalized_api_name = normalize_api_name(api_name)
+        normalized_tool_name = normalize_api_name(tool_name)
+        formatted_api_name = f"{normalized_api_name}_for_{normalized_tool_name}"
         
         # 构建参数信息
         required_params = api.get('required_parameters', [])
