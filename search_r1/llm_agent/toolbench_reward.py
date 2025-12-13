@@ -128,6 +128,13 @@ class ToolBenchRewardManager:
                 original_idx, meta_info, valid_response_length
             )
             
+            # 调试输出
+            if i == 0:
+                print(f"[DEBUG Reward] Sample {i} (original_idx={original_idx})")
+                print(f"  api_errors keys: {list(meta_info.get('api_errors', {}).keys())}")
+                print(f"  api_errors for this sample: {meta_info.get('api_errors', {}).get(original_idx, 'NOT FOUND')}")
+                print(f"  function_call_reward: {function_call_reward}")
+            
             # 3. Finish调用奖励：检查最后一次是否调用了Finish
             finish_reward = self._compute_finish_reward(
                 response_str, original_idx, meta_info, valid_response_length

@@ -311,8 +311,10 @@ class LLMGenerationManager:
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
             # Execute in environment and process observations
+            # Map active indices back to original batch indices for API call tracking
+            active_indices = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
             next_obs, dones, valid_action, is_search = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask
+                responses_str, self.tokenizer.pad_token, active_mask, original_indices=active_indices
             )
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
@@ -354,8 +356,10 @@ class LLMGenerationManager:
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
             # # Execute in environment and process observations
+            # Map active indices back to original batch indices
+            active_indices_final = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
             _, dones, valid_action, is_search = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask, do_search=False
+                responses_str, self.tokenizer.pad_token, active_mask, do_search=False, original_indices=active_indices_final
             )
 
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
@@ -419,7 +423,7 @@ class LLMGenerationManager:
         
         return final_output
 
-    def execute_predictions(self, predictions: List[str], pad_token: str, active_mask=None, do_search=True) -> List[str]:
+    def execute_predictions(self, predictions: List[str], pad_token: str, active_mask=None, do_search=True, original_indices=None) -> List[str]:
         """
         Execute predictions across multiple environments.
         NOTE: the function is the actual `step` function in the environment
@@ -430,6 +434,7 @@ class LLMGenerationManager:
             pad_token: Token to use for padding
             active_mask: Mask indicating which examples are still active
             do_search: Whether to actually execute search/API calls
+            original_indices: List of original batch indices (for mapping active batch indices back to original)
             
         Returns:
             Tuple of (next_obs, dones, valid_action, is_search)
@@ -443,14 +448,20 @@ class LLMGenerationManager:
         elif isinstance(active_mask, torch.Tensor):
             active_mask = active_mask.tolist()
         
+        # Map active batch indices to original batch indices
+        if original_indices is None:
+            original_indices = list(range(len(predictions)))
+        
         if self.config.use_toolbench:
             # ToolBench mode: call APIs
             api_calls = []
             api_indices = []
             for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
                 if action and action != 'Finish' and active_mask[i]:
+                    original_idx = original_indices[i] if i < len(original_indices) else i
                     api_calls.append({
-                        'index': i,
+                        'index': i,  # Active batch index (for api_results mapping)
+                        'original_index': original_idx,  # Original batch index (for api_call_history)
                         'action': action,
                         'content': content_dict
                     })
@@ -459,7 +470,9 @@ class LLMGenerationManager:
             # Batch API calls
             api_results = {}
             if do_search and api_calls:
+                print(f"[DEBUG] Calling {len(api_calls)} ToolBench APIs...")
                 api_results = self.batch_call_toolbench_apis(api_calls)
+                print(f"[DEBUG] Received {len(api_results)} API responses")
             
             # Process results
             api_result_idx = 0
@@ -474,8 +487,12 @@ class LLMGenerationManager:
                     if isinstance(content_dict, dict) and 'action_input' in content_dict:
                         return_type = content_dict['action_input'].get('return_type', 'give_answer')
                         # Track Finish call for reward computation
-                        if i in self.finish_call_history:
-                            self.finish_call_history[i] = return_type
+                        # Use original batch index
+                        original_idx = original_indices[i] if i < len(original_indices) else i
+                        if original_idx in self.finish_call_history:
+                            self.finish_call_history[original_idx] = return_type
+                        else:
+                            self.finish_call_history[original_idx] = return_type
                         if return_type == 'give_answer':
                             next_obs.append('')
                             dones.append(1)
@@ -498,9 +515,14 @@ class LLMGenerationManager:
                     response = result.get('response', '')
                     
                     # Track API call result for reward computation
+                    # Use original batch index for api_call_history
+                    original_idx = original_indices[i] if i < len(original_indices) else i
                     has_error = bool(error and error.strip())
-                    if i in self.api_call_history:
-                        self.api_call_history[i].append(has_error)
+                    if original_idx in self.api_call_history:
+                        self.api_call_history[original_idx].append(has_error)
+                    else:
+                        # Initialize if not exists
+                        self.api_call_history[original_idx] = [has_error]
                     
                     # Format as function response (matching StableToolBench format)
                     # In StableToolBench, function response is a JSON string: {"error": "", "response": "..."}
@@ -771,23 +793,29 @@ If I want to give the final answer, I should put the answer between <answer> and
                     'toolbench_key': self.config.toolbench_key
                 }
                 
+                print(f"[DEBUG] Calling ToolBench API: {action_name} (tool: {tool_name}, category: {category})")
                 response = requests.post(
                     f"{self.config.toolbench_url}/virtual",
                     json=payload,
                     timeout=30
                 )
                 
+                print(f"[DEBUG] ToolBench API response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     results[idx] = response.json()
+                    print(f"[DEBUG] API call success: error='{results[idx].get('error', '')}', response_length={len(str(results[idx].get('response', '')))}")
                 else:
                     results[idx] = {
                         'error': f'API call failed with status {response.status_code}',
                         'response': ''
                     }
+                    print(f"[DEBUG] API call failed with status {response.status_code}")
             except Exception as e:
                 results[idx] = {
                     'error': f'API call error: {str(e)}',
                     'response': ''
                 }
+                print(f"[DEBUG] API call exception: {str(e)}")
         
         return results
