@@ -56,6 +56,11 @@ class LLMGenerationManager:
         self.api_call_history = {}
         # Format: {sample_idx: 'give_answer' | 'give_up_and_restart' | None}
         self.finish_call_history = {}
+        
+        # Debug: Print config to verify use_toolbench is set
+        print(f"[DEBUG LLMGenerationManager.__init__] use_toolbench={self.config.use_toolbench}")
+        print(f"[DEBUG LLMGenerationManager.__init__] toolbench_url={self.config.toolbench_url}")
+        print(f"[DEBUG LLMGenerationManager.__init__] default_category={getattr(self.config, 'default_category', 'N/A')}")
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
@@ -286,10 +291,12 @@ class LLMGenerationManager:
         rollings = gen_batch
         
         # Initialize tracking for reward computation
+        print(f"[DEBUG run_llm_loop] use_toolbench={self.config.use_toolbench}, batch_size={gen_batch.batch['input_ids'].shape[0]}")
         if self.config.use_toolbench:
             batch_size = gen_batch.batch['input_ids'].shape[0]
             self.api_call_history = {i: [] for i in range(batch_size)}
             self.finish_call_history = {i: None for i in range(batch_size)}
+            print(f"[DEBUG run_llm_loop] Initialized api_call_history and finish_call_history for {batch_size} samples")
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -381,11 +388,14 @@ class LLMGenerationManager:
         
         # Add ToolBench reward computation info
         if self.config.use_toolbench:
+            print(f"[DEBUG run_llm_loop] Finalizing: api_call_history has {len(self.api_call_history)} entries")
+            print(f"[DEBUG run_llm_loop] api_call_history keys: {list(self.api_call_history.keys())[:10]}...")  # Show first 10
             meta_info['api_errors'] = {
                 i: [error for error in errors] 
                 for i, errors in self.api_call_history.items()
             }
             meta_info['finish_called'] = self.finish_call_history.copy()
+            print(f"[DEBUG run_llm_loop] Added to meta_info: api_errors has {len(meta_info['api_errors'])} entries")
         
         print("ACTIVE_TRAJ_NUM:", active_num_list)
         
@@ -454,13 +464,15 @@ class LLMGenerationManager:
         
         if self.config.use_toolbench:
             # ToolBench mode: call APIs
+            print(f"[DEBUG execute_predictions] ENTERED ToolBench mode")
             print(f"[DEBUG execute_predictions] do_search={do_search}, num_predictions={len(predictions)}, active_mask={active_mask}")
             print(f"[DEBUG execute_predictions] cur_actions={cur_actions[:3] if len(cur_actions) > 0 else '[]'}...")  # Show first 3
             
             api_calls = []
             api_indices = []
             for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
-                print(f"[DEBUG execute_predictions] Sample {i}: action={action}, active_mask[{i}]={active_mask[i] if i < len(active_mask) else 'N/A'}")
+                if i < 3:  # Only print first 3 to avoid too much output
+                    print(f"[DEBUG execute_predictions] Sample {i}: action={action}, active_mask[{i}]={active_mask[i] if i < len(active_mask) else 'N/A'}")
                 if action and action != 'Finish' and active_mask[i]:
                     original_idx = original_indices[i] if i < len(original_indices) else i
                     api_calls.append({
@@ -470,9 +482,12 @@ class LLMGenerationManager:
                         'content': content_dict
                     })
                     api_indices.append(i)
-                    print(f"[DEBUG execute_predictions] Added API call: index={i}, original_idx={original_idx}, action={action}")
+                    if len(api_calls) < 3:  # Only print first 3
+                        print(f"[DEBUG execute_predictions] Added API call: index={i}, original_idx={original_idx}, action={action}")
             
             print(f"[DEBUG execute_predictions] Total api_calls collected: {len(api_calls)}")
+            if len(api_calls) > 0:
+                print(f"[DEBUG execute_predictions] First API call: {api_calls[0]}")
             
             # Batch API calls
             api_results = {}

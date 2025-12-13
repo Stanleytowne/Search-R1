@@ -733,11 +733,13 @@ class RayPPOTrainer(object):
                         first_input_ids = gen_batch.batch['input_ids'][:, -gen_config.max_start_length:].clone().long()
 
                         with _timer('gen', timing_raw):
+                            print(f"[DEBUG ray_trainer] About to call run_llm_loop, use_toolbench={gen_config.use_toolbench}, do_search={self.config.do_search}")
                             generation_manager.timing_raw = timing_raw
                             final_gen_batch_output = generation_manager.run_llm_loop(
                                 gen_batch=gen_batch,
                                 initial_input_ids=first_input_ids,
                             )
+                            print(f"[DEBUG ray_trainer] run_llm_loop completed, batch_size={final_gen_batch_output.batch['responses'].shape[0]}")
 
                         # final_gen_batch_output.batch.apply(lambda x: x.long(), inplace=True)
                         for key in final_gen_batch_output.batch.keys():
