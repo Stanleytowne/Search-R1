@@ -6,6 +6,7 @@ ToolBench模式的Reward计算
 3. Finish调用奖励：最后一次是否调用Finish
 """
 
+import os
 import torch
 import re
 import json
