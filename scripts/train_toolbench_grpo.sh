@@ -41,33 +41,6 @@ N_AGENT="${N_AGENT:-5}"  # 每个prompt生成的响应数
 LEARNING_RATE="${LEARNING_RATE:-5e-7}"
 LR_WARMUP_RATIO="${LR_WARMUP_RATIO:-0.285}"
 
-# 检查数据文件
-if [ ! -f "$TRAIN_FILE" ]; then
-    echo "Error: Training file not found: $TRAIN_FILE"
-    echo "Please run the data conversion script first:"
-    echo "  python scripts/convert_toolbench_to_verl.py --input <json_file> --output $TRAIN_FILE --split"
-    exit 1
-fi
-
-if [ ! -f "$VAL_FILE" ]; then
-    echo "Error: Validation file not found: $VAL_FILE"
-    exit 1
-fi
-
-# 检查ToolBench服务器（简单检查服务器是否可访问）
-echo "Checking ToolBench server at $TOOLBENCH_URL..."
-if ! curl -s --connect-timeout 2 "$TOOLBENCH_URL" > /dev/null 2>&1; then
-    echo "Warning: ToolBench server may not be accessible at $TOOLBENCH_URL"
-    echo "Please ensure the server is running:"
-    echo "  cd StableToolBench/server && bash start_server.sh"
-    echo ""
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
-
 echo "Starting ToolBench GRPO training..."
 echo "  Train file: $TRAIN_FILE"
 echo "  Val file: $VAL_FILE"
