@@ -80,19 +80,31 @@ class ToolBenchRewardManager:
             
             # 获取response
             response_ids = data_item.batch['responses']
-            prompt_length = data_item.batch['prompts'].shape[-1]
-            valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum().item()
-            valid_response_ids = response_ids[:valid_response_length]
+            prompt_ids = data_item.batch['prompts']
+            prompt_length = prompt_ids.shape[-1]
+            attention_mask = data_item.batch['attention_mask']
+            
+            # 使用attention_mask确定有效的prompt和response长度
+            valid_prompt_length = attention_mask[:prompt_length].sum().item()
+            valid_response_length = attention_mask[prompt_length:].sum().item()
+            
+            # 只取有效的tokens（避免解码padding tokens）
+            valid_prompt_ids = prompt_ids[-valid_prompt_length:] if valid_prompt_length > 0 else prompt_ids
+            valid_response_ids = response_ids[:valid_response_length] if valid_response_length > 0 else response_ids
 
-            # 解码response
+            # 解码response（只解码有效部分）
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
+            # 调试输出（只解码有效部分）
             if i == 0:
                 print("#" * 30)
-                print(self.tokenizer.decode(data_item.batch['prompts']))
+                print("PROMPT (valid tokens only):")
+                if valid_prompt_length > 0:
+                    print(self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
+                else:
+                    print("(empty)")
                 print("#" * 30)
-                print(self.tokenizer.decode(data_item.batch['responses']))
-                print("#" * 30)
+                print("RESPONSE (valid tokens only):")
                 print(response_str)
                 print("#" * 30)
             
