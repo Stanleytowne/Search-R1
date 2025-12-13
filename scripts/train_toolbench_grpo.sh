@@ -21,7 +21,7 @@ VAL_FILE="${VAL_FILE:-$DATA_DIR/val.parquet}"
 MODEL_PATH="${MODEL_PATH:-ToolBench/ToolLLaMA-2-7b-v2}"
 
 # ToolBench服务器
-TOOLBENCH_URL="${TOOLBENCH_URL:-http://10.153.48.52:8080}"
+TOOLBENCH_URL="${TOOLBENCH_URL:-http://10.153.48.58:8080}"
 TOOLBENCH_KEY="${TOOLBENCH_KEY:-}"
 
 # 训练配置
@@ -105,7 +105,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \
-    trainer.val_before_train=false \
+    +trainer.val_before_train=false \
     trainer.test_freq=-1 \
     "$@"
 
