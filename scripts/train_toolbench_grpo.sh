@@ -54,9 +54,10 @@ if [ ! -f "$VAL_FILE" ]; then
     exit 1
 fi
 
-# 检查ToolBench服务器（简单检查服务器是否可访问）
-echo "Checking ToolBench server at $TOOLBENCH_URL..."
-if ! curl -s --connect-timeout 2 "$TOOLBENCH_URL" > /dev/null 2>&1; then
+# 检查ToolBench服务器（检查服务器是否可连接，不检查具体端点）
+echo "Checking ToolBench server connectivity at $TOOLBENCH_URL..."
+# 使用 POST 请求检查 /virtual 端点是否可访问（即使返回错误也说明服务器在运行）
+if ! curl -s --connect-timeout 2 -X POST "$TOOLBENCH_URL/virtual" -H "Content-Type: application/json" -d '{}' > /dev/null 2>&1; then
     echo "Warning: ToolBench server may not be accessible at $TOOLBENCH_URL"
     echo "Please ensure the server is running:"
     echo "  cd StableToolBench/server && bash start_server.sh"
@@ -66,6 +67,8 @@ if ! curl -s --connect-timeout 2 "$TOOLBENCH_URL" > /dev/null 2>&1; then
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
+else
+    echo "ToolBench server is accessible."
 fi
 
 echo "Starting ToolBench GRPO training..."

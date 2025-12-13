@@ -29,6 +29,12 @@ import verl.utils.torch_functional as verl_F
 
 
 def collate_fn(data_list: list[dict]) -> dict:
+    # Filter out None values (skipped samples)
+    data_list = [data for data in data_list if data is not None]
+    
+    if len(data_list) == 0:
+        raise ValueError("All samples in batch were filtered out (likely due to length exceeding max_prompt_length)")
+    
     tensors = {}
     non_tensors = {}
 
@@ -107,10 +113,30 @@ class RLHFDataset(Dataset):
         tokenizer = self.tokenizer
         prompt_key = self.prompt_key
 
-        # nvm if prompt is too long
-        # self.dataframe = self.dataframe[self.dataframe.apply(lambda doc: len(
-        #     tokenizer.apply_chat_template(doc[prompt_key], add_generation_prompt=True)) <= self.max_prompt_length,
-        #                                                      axis=1)]
+        # Filter out prompts that are too long
+        if self.filter_prompts:
+            def check_prompt_length(doc):
+                try:
+                    chat = doc[prompt_key]
+                    if tokenizer.chat_template:
+                        prompt_with_chat_template = tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
+                    else:
+                        prompt_with_chat_template = chat[0]['content'] if isinstance(chat, list) and len(chat) > 0 else str(chat)
+                    
+                    # Tokenize to check length
+                    tokenized = tokenizer(prompt_with_chat_template, add_special_tokens=False, return_tensors='pt')
+                    sequence_length = tokenized['input_ids'].shape[-1]
+                    return sequence_length <= self.max_prompt_length
+                except Exception as e:
+                    # If there's any error, skip this sample
+                    print(f"[WARNING] Error checking prompt length, skipping sample: {e}")
+                    return False
+            
+            original_len = len(self.dataframe)
+            self.dataframe = self.dataframe[self.dataframe.apply(check_prompt_length, axis=1)]
+            filtered_len = len(self.dataframe)
+            if original_len != filtered_len:
+                print(f"[INFO] Filtered out {original_len - filtered_len} samples with prompts longer than {self.max_prompt_length} tokens")
 
         print(f'filter dataset len: {len(self.dataframe)}')
 
@@ -128,15 +154,21 @@ class RLHFDataset(Dataset):
         if self.tokenizer.chat_template:
             prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
         else:
-            prompt_with_chat_template = chat[0]['content']
+            prompt_with_chat_template = chat[0]['content'] if isinstance(chat, list) and len(chat) > 0 else str(chat)
         # prompt_with_chat_template = chat
 
-        input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(prompt=prompt_with_chat_template,
-                                                                         tokenizer=self.tokenizer,
-                                                                         max_length=self.max_prompt_length,
-                                                                         pad_token_id=self.tokenizer.pad_token_id,
-                                                                         left_pad=True,
-                                                                         truncation=self.truncation)
+        try:
+            input_ids, attention_mask = verl_F.tokenize_and_postprocess_data(prompt=prompt_with_chat_template,
+                                                                             tokenizer=self.tokenizer,
+                                                                             max_length=self.max_prompt_length,
+                                                                             pad_token_id=self.tokenizer.pad_token_id,
+                                                                             left_pad=True,
+                                                                             truncation=self.truncation)
+        except NotImplementedError as e:
+            # If prompt is too long and truncation='error', skip this sample
+            # Return None and let the DataLoader filter it out
+            print(f"[WARNING] Skipping sample {item}: {e}")
+            return None
 
         position_ids = compute_position_id_with_mask(attention_mask)
 
