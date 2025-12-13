@@ -56,10 +56,6 @@ class LLMGenerationManager:
         self.api_call_history = {}
         # Format: {sample_idx: 'give_answer' | 'give_up_and_restart' | None}
         self.finish_call_history = {}
-        
-        # Debug: Print config to verify use_toolbench is set
-        print(f"[DEBUG LLMGenerationManager.__init__] use_toolbench={self.config.use_toolbench}")
-        print(f"[DEBUG LLMGenerationManager.__init__] toolbench_url={self.config.toolbench_url}")
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
@@ -290,7 +286,6 @@ class LLMGenerationManager:
         rollings = gen_batch
         
         # Initialize tracking for reward computation
-        print(f"[DEBUG run_llm_loop] use_toolbench={self.config.use_toolbench}, batch_size={gen_batch.batch['input_ids'].shape[0]}")
         if self.config.use_toolbench:
             batch_size = gen_batch.batch['input_ids'].shape[0]
             self.api_call_history = {i: [] for i in range(batch_size)}
@@ -303,10 +298,8 @@ class LLMGenerationManager:
             extra_info = None
             if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
                 extra_info = gen_batch.non_tensor_batch['extra_info']
-                print(f"[DEBUG run_llm_loop] Found extra_info in non_tensor_batch, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
             elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
                 extra_info = gen_batch.meta_info['extra_info']
-                print(f"[DEBUG run_llm_loop] Found extra_info in meta_info, length={len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
             
             if extra_info is None:
                 raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
@@ -347,10 +340,6 @@ class LLMGenerationManager:
                     
                     if api_validation_info:
                         self.sample_api_lists[i] = api_validation_info
-            
-            print(f"[DEBUG run_llm_loop] Successfully extracted categories from {len(self.sample_categories)} samples")
-            print(f"[DEBUG run_llm_loop] Successfully extracted API lists from {len(self.sample_api_lists)} samples")
-            print(f"[DEBUG run_llm_loop] Sample categories: {dict(list(self.sample_categories.items())[:5])}...")
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -517,16 +506,10 @@ class LLMGenerationManager:
             original_indices = list(range(len(predictions)))
         
         if self.config.use_toolbench:
-            # ToolBench mode: call APIs
-            print(f"[DEBUG execute_predictions] ENTERED ToolBench mode")
-            print(f"[DEBUG execute_predictions] do_search={do_search}, num_predictions={len(predictions)}, active_mask={active_mask}")
-            print(f"[DEBUG execute_predictions] cur_actions={cur_actions[:3] if len(cur_actions) > 0 else '[]'}...")  # Show first 3
             
             api_calls = []
             api_indices = []
             for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
-                if i < 3:  # Only print first 3 to avoid too much output
-                    print(f"[DEBUG execute_predictions] Sample {i}: action={action}, active_mask[{i}]={active_mask[i] if i < len(active_mask) else 'N/A'}")
                 if action and action != 'Finish' and active_mask[i]:
                     original_idx = original_indices[i] if i < len(original_indices) else i
                     api_calls.append({
@@ -536,19 +519,11 @@ class LLMGenerationManager:
                         'content': content_dict
                     })
                     api_indices.append(i)
-                    if len(api_calls) < 3:  # Only print first 3
-                        print(f"[DEBUG execute_predictions] Added API call: index={i}, original_idx={original_idx}, action={action}")
-            
-            print(f"[DEBUG execute_predictions] Total api_calls collected: {len(api_calls)}")
-            if len(api_calls) > 0:
-                print(f"[DEBUG execute_predictions] First API call: {api_calls[0]}")
             
             # Batch API calls
             api_results = {}
             if do_search and api_calls:
-                print(f"[DEBUG] Calling {len(api_calls)} ToolBench APIs...")
                 api_results = self.batch_call_toolbench_apis(api_calls)
-                print(f"[DEBUG] Received {len(api_results)} API responses")
             elif not do_search:
                 print(f"[DEBUG] Skipping API calls because do_search=False")
             elif not api_calls:
@@ -687,18 +662,9 @@ If I want to give the final answer, I should put the answer between <answer> and
                     action_start = prediction.find("\nAction: ")
                     action_input_start = prediction.find("\nAction Input: ")
                     
-                    if idx < 2:  # Debug first 2 predictions
-                        print(f"[DEBUG postprocess_predictions] Sample {idx}:")
-                        print(f"  prediction length: {len(prediction)}")
-                        print(f"  thought_start: {thought_start}, action_start: {action_start}, action_input_start: {action_input_start}")
-                        print(f"  prediction preview: {prediction[:200]}...")
-                    
                     if thought_start != -1 and action_start != -1 and action_input_start != -1:
                         action_name = prediction[action_start + len("\nAction: "):action_input_start].strip()
                         action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
-                        
-                        if idx < 2:
-                            print(f"[DEBUG postprocess_predictions] Sample {idx} parsed: action_name={action_name}")
                         
                         # Try to parse JSON - handle both single-line and multi-line JSON
                         action_input = {}
@@ -940,15 +906,12 @@ If I want to give the final answer, I should put the answer between <answer> and
                     'strip': '',
                     'toolbench_key': self.config.toolbench_key
                 }
-                
-                print(f"[DEBUG] Calling ToolBench API: {action_name} (tool: {tool_name}, category: {category})")
+
                 response = requests.post(
                     f"{self.config.toolbench_url}/virtual",
                     json=payload,
                     timeout=30
                 )
-                
-                print(f"[DEBUG] ToolBench API response status: {response.status_code}")
                 
                 if response.status_code == 200:
                     results[idx] = response.json()
@@ -958,7 +921,8 @@ If I want to give the final answer, I should put the answer between <answer> and
                         'error': f'API call failed with status {response.status_code}',
                         'response': ''
                     }
-                    print(f"[DEBUG] API call failed with status {response.status_code}")
+                    print(f"[DEBUG] Calling ToolBench API: {action_name} (tool: {tool_name}, category: {category}) Error with response status: {response.status_code}")
+                    print(f"[DEBUG] Action input: {action_input}")
             except Exception as e:
                 results[idx] = {
                     'error': f'API call error: {str(e)}',

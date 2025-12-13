@@ -5,10 +5,10 @@ data:
   train_data_num: null
   val_data_num: null
   prompt_key: prompt
-  max_prompt_length: 6144
-  max_response_length: 2048
+  max_prompt_length: 2048
+  max_response_length: 6144
   max_start_length: 2048
-  max_obs_length: 500
+  max_obs_length: 2000
   train_batch_size: 64
   val_batch_size: 64
   return_raw_input_ids: False
