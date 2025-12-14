@@ -40,7 +40,7 @@ TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/val_filtered.parquet}"
 VAL_FILE="${VAL_FILE:-$DATA_DIR/val_filtered.parquet}"
 
 # 模型路径
-MODEL_PATH="${MODEL_PATH:-ToolBench/ToolLLaMA-2-7b-v2}"
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}"
 
 # ToolBench服务器
 TOOLBENCH_URL="${TOOLBENCH_URL:-http://10.153.48.58:8080}"
