@@ -296,6 +296,14 @@ class LLMGenerationManager:
 
     def run_llm_loop(self, gen_batch, initial_input_ids: torch.Tensor) -> Tuple[Dict, Dict]:
         """Run main LLM generation loop."""
+
+        # INSERT_YOUR_CODE
+        # 打印第一条数据的input
+        if gen_batch.batch['input_ids'].shape[0] > 0:
+            first_input_ids = gen_batch.batch['input_ids'][0]
+            input_text = self.tokenizer.decode(first_input_ids, skip_special_tokens=False)
+            print("[DEBUG] First sample input:")
+            print(input_text)
         
         original_left_side = {'input_ids': initial_input_ids[:, -self.config.max_start_length:]}
         original_right_side = {'responses': initial_input_ids[:, []], 'responses_with_info_mask': initial_input_ids[:, []]}
