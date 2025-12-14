@@ -2,6 +2,7 @@
 # ToolBench GRPO训练脚本
 
 set -e
+
 # 如果存在wandb_api.json则自动加载wandb API Key
 # 格式:
 # {

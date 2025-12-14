@@ -181,12 +181,12 @@ Examples:
                        help="Input parquet file path")
     parser.add_argument("--output", type=str, default='data/toolbench/val_filtered.parquet',
                        help="Output parquet file path")
-    parser.add_argument("--max_length", type=int, default=4096,
+    parser.add_argument("--max_length", type=int, default=2048,
                        help="Maximum length threshold")
     parser.add_argument("--method", type=str, default="tokens",
                        choices=["chars", "tokens", "messages"],
                        help="Length calculation method (default: chars)")
-    parser.add_argument("--tokenizer", type=str, default='ToolBench/ToolLLaMA-2-7b-v2',
+    parser.add_argument("--tokenizer", type=str, default='Qwen/Qwen2.5-7B-Instruct',
                        help="Tokenizer path (required when method=tokens)")
     parser.add_argument("--quiet", action="store_true",
                        help="Suppress verbose output")
