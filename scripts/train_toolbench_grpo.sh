@@ -68,7 +68,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     use_toolbench=true \
     toolbench_url="$TOOLBENCH_URL" \
     toolbench_key="$TOOLBENCH_KEY" \
-    default_category="G1_category" \
     algorithm.adv_estimator=grpo \
     reward_model.format_reward_weight="$FORMAT_REWARD_WEIGHT" \
     reward_model.function_call_reward_weight="$FUNCTION_CALL_REWARD_WEIGHT" \

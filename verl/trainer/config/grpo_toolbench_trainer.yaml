@@ -5,9 +5,9 @@ data:
   train_data_num: null
   val_data_num: null
   prompt_key: prompt
-  max_prompt_length: 2048
-  max_response_length: 6144
-  max_start_length: 2048
+  max_prompt_length: 8192
+  max_response_length: 1024
+  max_start_length: 7168
   max_obs_length: 2000
   train_batch_size: 64
   val_batch_size: 64
@@ -18,7 +18,7 @@ data:
 actor_rollout_ref:
   hybrid_engine: True
   model:
-    path: ToolBench/ToolLLaMA-2-7b-v2
+    path: Qwen/Qwen2.5-7B-Instruct
     external_lib: null
     override_config: { }
     enable_gradient_checkpointing: true
@@ -33,7 +33,7 @@ actor_rollout_ref:
     state_masking: False
     clip_ratio: 0.2
     entropy_coeff: 0.001
-    use_kl_loss: true  # GRPO需要KL loss
+    use_kl_loss: true
     kl_loss_coef: 0.001
     kl_loss_type: low_var_kl
     ppo_epochs: 1
@@ -180,4 +180,3 @@ do_search: true  # Must be true for ToolBench mode to enable run_llm_loop and AP
 use_toolbench: true
 toolbench_url: "http://127.0.0.1:8000"
 toolbench_key: ""
-default_category: "G1_category"

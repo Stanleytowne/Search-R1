@@ -283,7 +283,7 @@ class ToolBenchRewardManager:
             return_type = finish_called[sample_idx]
             if return_type == 'give_answer':
                 return self.finish_bonus
-            elif return_type == 'give_up_and_restart':
+            elif return_type == 'give_up':
                 return self.finish_bonus * 0.5  # 部分奖励（至少调用了Finish）
             else:
                 return self.finish_bonus * 0.3  # Finish存在但格式可能不对

@@ -73,7 +73,7 @@ class LLMGenerationManager:
         # Track API calls and Finish calls for reward computation
         # Format: {sample_idx: [list of (error, success)]}
         self.api_call_history = {}
-        # Format: {sample_idx: 'give_answer' | 'give_up_and_restart' | None}
+        # Format: {sample_idx: 'give_answer' | 'give_up' | None}
         self.finish_call_history = {}
 
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
@@ -97,8 +97,11 @@ class LLMGenerationManager:
             # Format: Thought: ...\nAction: ...\nAction Input: {...}
             processed_responses = []
             for resp in responses_str:
-                # Remove </s> token if present (it may appear in decoded string)
-                resp = resp.replace('</s>', '').strip()
+                # Remove eos_token if present at the end of the sequence
+                eos_token = self.tokenizer.eos_token if hasattr(self.tokenizer, 'eos_token') and self.tokenizer.eos_token is not None else '</s>'
+                resp = resp.rstrip()
+                if resp.endswith(eos_token):
+                    resp = resp[:-len(eos_token)].rstrip()
                 
                 # Check if there's a complete Action Input (function call)
                 # Look for "Action Input:" followed by JSON object
@@ -304,7 +307,6 @@ class LLMGenerationManager:
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
-        # Initialize tracking for reward computation
         if self.config.use_toolbench:
             batch_size = gen_batch.batch['input_ids'].shape[0]
             self.api_call_history = {i: [] for i in range(batch_size)}
@@ -319,8 +321,7 @@ class LLMGenerationManager:
                 extra_info = gen_batch.non_tensor_batch['extra_info']
             elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
                 extra_info = gen_batch.meta_info['extra_info']
-            
-            if extra_info is None:
+            else:
                 raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
             
             if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
@@ -328,38 +329,30 @@ class LLMGenerationManager:
             
             # Extract category and API info for each sample
             for i, info in enumerate(extra_info):
-                if not isinstance(info, dict):
-                    raise ValueError(f"Sample {i}: extra_info[{i}] is not a dict, got {type(info)}")
-                
-                if 'category' not in info:
-                    raise ValueError(f"Sample {i}: Missing 'category' in extra_info. Required for ToolBench API calls.")
                 
                 self.sample_categories[i] = info['category']
                 
                 # Extract API validation info (simplified format: api, n_required_param, n_optional_param)
-                if 'api' in info and info['api']:
-                    # Parse comma-separated API names and counts
-                    api_names = [name.strip() for name in info['api'].split(',') if name.strip()]
-                    n_required_str = info.get('n_required_param', '')
-                    n_optional_str = info.get('n_optional_param', '')
-                    
-                    # Parse comma-separated counts
-                    n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
-                    n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
-                    
-                    # Build API validation dict (normalize API names)
-                    api_validation_info = {}
-                    for idx_api, api_name in enumerate(api_names):
-                        normalized_name = normalize_api_name(api_name)
-                        required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
-                        optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
-                        api_validation_info[normalized_name] = {
-                            'required_count': required_count,
-                            'optional_count': optional_count
-                        }
-                    
-                    if api_validation_info:
-                        self.sample_api_lists[i] = api_validation_info
+                # Parse comma-separated API names and counts
+                api_names = [name.strip() for name in info['api'].split(',') if name.strip()]
+                n_required_str = info.get('n_required_param', '')
+                n_optional_str = info.get('n_optional_param', '')
+                
+                # Parse comma-separated counts
+                n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
+                n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
+                
+                # Build API validation dict (normalize API names)
+                api_validation_info = {}
+                for idx_api, api_name in enumerate(api_names):
+                    normalized_name = normalize_api_name(api_name)
+                    required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
+                    optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
+                    api_validation_info[normalized_name] = {
+                        'required_count': required_count,
+                        'optional_count': optional_count
+                    }
+                self.sample_api_lists[i] = api_validation_info
 
         # Main generation loop
         for step in range(self.config.max_turns):
@@ -494,7 +487,61 @@ class LLMGenerationManager:
         final_output = DataProto.from_dict(final_output)
         final_output.meta_info.update(meta_info)
         
+        # Debug: Print full conversation for first sample
+        if final_output.batch['input_ids'].shape[0] > 0:
+            self._debug_print_full_conversation(final_output, 0)
+        
         return final_output
+
+    def _debug_print_full_conversation(self, final_output: DataProto, sample_idx: int = 0):
+        """Print full conversation for debugging purposes."""
+        try:
+            # Get prompt (initial input)
+            prompt_ids = final_output.batch['prompts'][sample_idx]
+            prompt_mask = final_output.batch['attention_mask'][sample_idx, :prompt_ids.shape[0]]
+            valid_prompt_ids = prompt_ids[prompt_mask.bool()]
+            
+            # Get full input_ids (prompt + responses)
+            input_ids = final_output.batch['input_ids'][sample_idx]
+            attention_mask = final_output.batch['attention_mask'][sample_idx]
+            valid_input_ids = input_ids[attention_mask.bool()]
+            
+            # Decode prompt
+            prompt_text = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
+            
+            # Decode full sequence
+            full_text = self.tokenizer.decode(valid_input_ids, skip_special_tokens=False)
+            
+            # Extract response part (everything after prompt)
+            # Find where prompt ends in the full text
+            prompt_len = len(prompt_text)
+            if len(full_text) > prompt_len:
+                response_text = full_text[prompt_len:].lstrip()
+            else:
+                response_text = ""
+            
+            # Get metadata if available
+            turns = final_output.meta_info.get('turns_stats', [0])[sample_idx] if 'turns_stats' in final_output.meta_info else 0
+            valid_actions = final_output.meta_info.get('valid_action_stats', [0])[sample_idx] if 'valid_action_stats' in final_output.meta_info else 0
+            
+            # Print formatted conversation
+            print("\n" + "=" * 100)
+            print(f"[DEBUG] FULL CONVERSATION - Sample {sample_idx} (Turns: {turns}, Valid Actions: {valid_actions})")
+            print("=" * 100)
+            print("\n[PROMPT (Initial Context)]")
+            print("-" * 100)
+            print(prompt_text)
+            print("\n[RESPONSES (Generated Content)]")
+            print("-" * 100)
+            if response_text:
+                print(response_text)
+            else:
+                print("(No response generated)")
+            print("\n" + "=" * 100 + "\n")
+        except Exception as e:
+            print(f"[DEBUG] Error printing full conversation: {e}")
+            import traceback
+            traceback.print_exc()
 
     def execute_predictions(self, predictions: List[str], pad_token: str, active_mask=None, do_search=True, original_indices=None) -> List[str]:
         """
@@ -542,10 +589,8 @@ class LLMGenerationManager:
             
             # Batch API calls
             api_results = {}
-            if do_search and api_calls:
+            if api_calls:
                 api_results = self.batch_call_toolbench_apis(api_calls)
-            elif not do_search:
-                print(f"[DEBUG] Skipping API calls because do_search=False")
             elif not api_calls:
                 print(f"[DEBUG] No API calls to make (api_calls is empty)")
             
@@ -558,7 +603,7 @@ class LLMGenerationManager:
                     valid_action.append(0)
                     is_search.append(0)
                 elif action == 'Finish':
-                    # Check if it's give_answer or give_up_and_restart
+                    # Check if it's give_answer or give_up
                     if isinstance(content_dict, dict) and 'action_input' in content_dict:
                         return_type = content_dict['action_input'].get('return_type', 'give_answer')
                         # Track Finish call for reward computation
@@ -568,16 +613,10 @@ class LLMGenerationManager:
                             self.finish_call_history[original_idx] = return_type
                         else:
                             self.finish_call_history[original_idx] = return_type
-                        if return_type == 'give_answer':
-                            next_obs.append('')
-                            dones.append(1)
-                            valid_action.append(1)
-                            is_search.append(0)
-                        else:  # give_up_and_restart
-                            next_obs.append('\n\nI give up and restart.\n\n')
-                            dones.append(1)
-                            valid_action.append(1)
-                            is_search.append(0)
+                        next_obs.append('')
+                        dones.append(1)
+                        valid_action.append(1)
+                        is_search.append(0)
                     else:
                         next_obs.append('')
                         dones.append(1)
@@ -600,23 +639,23 @@ class LLMGenerationManager:
                         self.api_call_history[original_idx] = [has_error]
                     
                     # Format as function response (matching StableToolBench format)
-                    # In StableToolBench, function response format is: "Function: {json_string}\n"
+                    # In StableToolBench, function response format is: "Observation: {json_string}\n"
                     # The JSON string format is: {"error": "", "response": "..."}
                     function_response_json = json.dumps({"error": error, "response": response}, ensure_ascii=False)
-                    # Match StableToolBench format: "Function: {content}\n" (as in tool_llama_model.py line 117)
-                    next_obs.append(f"Function: {function_response_json}\n")
+                    # Match StableToolBench format: "Observation: {content}\n" (as in tool_llama_model.py line 117)
+                    next_obs.append(f"Observation: {function_response_json}\n")
                     dones.append(0)
                     valid_action.append(1)
                     is_search.append(1)  # Treat API calls as search-like operations
                 elif action:
                     # Invalid API call or parsing error
-                    next_obs.append('\nMy previous action is invalid. Please check the Action and Action Input format.\n')
+                    next_obs.append('\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n')
                     dones.append(0)
                     valid_action.append(0)
                     is_search.append(0)
                 else:
                     # No action detected
-                    next_obs.append('\nMy previous action is invalid. Please provide Thought, Action, and Action Input.\n')
+                    next_obs.append('\nMy previous action is invalid. I should provide Thought, Action, and Action Input.\n')
                     dones.append(0)
                     valid_action.append(0)
                     is_search.append(0)
@@ -677,7 +716,6 @@ If I want to give the final answer, I should put the answer between <answer> and
             if isinstance(prediction, str): # for llm output
                 if self.config.use_toolbench:
                     # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
-                    # This matches the react_parser in StableToolBench/utils.py
                     thought_start = prediction.find("Thought: ")
                     action_start = prediction.find("\nAction: ")
                     action_input_start = prediction.find("\nAction Input: ")
@@ -832,39 +870,6 @@ If I want to give the final answer, I should put the answer between <answer> and
         
         # Validation passed
         return None
-    
-    def extract_api_info_from_prompt(self, prompt_text: str) -> Dict[str, Any]:
-        """
-        Extract API information from the system message in the prompt.
-        This parses the StableToolBench format where APIs are listed in the system message.
-        
-        Returns a dict mapping API names to their metadata.
-        """
-        # Try to extract API list from system message
-        # Format: "Specifically, you have access to the following APIs: [...]"
-        api_info = {}
-        
-        # Look for the API list in the system message
-        api_list_match = re.search(r'Specifically, you have access to the following APIs:\s*(\[.*?\])', prompt_text, re.DOTALL)
-        if api_list_match:
-            try:
-                api_list_str = api_list_match.group(1)
-                api_list = json.loads(api_list_str)
-                
-                for api in api_list:
-                    api_name_raw = api.get('name', '')
-                    if api_name_raw:
-                        # Normalize API name
-                        api_name = normalize_api_name(api_name_raw)
-                        api_info[api_name] = {
-                            'name': api_name,
-                            'description': api.get('description', ''),
-                            'parameters': api.get('parameters', {})
-                        }
-            except json.JSONDecodeError:
-                pass
-        
-        return api_info
     
     def batch_call_toolbench_apis(self, api_calls: List[Dict]) -> Dict[int, Dict]:
         """

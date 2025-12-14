@@ -40,34 +40,30 @@ def normalize_api_name(api_name: str) -> str:
         return "Finish"
     return api_name.lower().replace(' ', '_')
 
+SYSTEM_PROMPT_TEMPLATE = """You are an intelligent agent designed to handle real-time user queries using a variety of tools.
 
-SYSTEM_PROMPT_TEMPLATE = """You are AutoGPT, you can use many tools(functions) to do the following task.
+First, you will receive a task description. Then, you will enter a loop of reasoning and acting to complete the task.
 
-First you will be given the task description, and then your task starts.
-At each step, you need to give your thought to analyze the status now and what to do next, with a function call to actually excute your step. Your output should follow this format:
+At each step, follow this process:
+1. **Thought**: Analyze the current status and determine the next logical step.
+2. **Action**: Select the appropriate tool to execute that step and output the function name directly.
+3. **Action Input**: Provide the arguments for the tool as a STRICT valid JSON object.
 
-Thought:
-Action
-Action Input:
+Output Format:
+Thought: <your reasoning>
+Action: <function_name>
+Action Input: <function_arguments_as_a_valid_JSON_object>
 
-After the call, you will get the call result, and you are now in a new state.
-Then you will analyze your status now, then decide what to do next...
-After several (Thought-call) pairs, you finally perform the task, then you can give your finial answer.
-Remember: 
-1.the state change is irreversible, you can't go back to one of the former state, if you want to restart the task, say "I give up and restart".
-2.All the thought is short, at most in 5 sentence.
-3.You can do more then one trys, so if your plan is to continusly try some conditions, you can do one of the conditions per try.
+After the action is executed, you will receive the result (Observation). Based on the new state, continue the loop until the task is complete.
 
-Let's Begin!
+Constraints & Rules:
+1. **Action Field**: The "Action" output must be the EXACT name of the function. Do NOT include parentheses `()`, words like "call" or "use", or any punctuation.
+2. **Finishing**: You MUST call the "Finish" function to submit your final answer. 
+3. **Failure**: If you cannot complete the task or verify that a tool is broken after retries, call "Finish" with "return_type" as "give_up".
 
-Task description: You should use functions to help handle the real time user querys. Remember:
-1.ALWAYS call "Finish" function at the end of the task. And the final answer should contain enough information to show to the user,If you can't handle the task, or you find that function calls always fail(the function is not valid now), use function Finish->give_up_and_restart.
-2.Do not use origin tool names, use only subfunctions' names.
-
-You have access of the following tools:
-{tool_descriptions}
-
-Specifically, you have access to the following APIs: {api_list}"""
+Available Tools:
+{api_list}
+"""
 
 
 def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[Dict]]:
@@ -171,13 +167,13 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
     # 添加Finish函数
     finish_api = {
         'name': 'Finish',
-        'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to restart. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
+        'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
         'parameters': {
             'type': 'object',
             'properties': {
                 'return_type': {
                     'type': 'string',
-                    'enum': ['give_answer', 'give_up_and_restart']
+                    'enum': ['give_answer', 'give_up']
                 },
                 'final_answer': {
                     'type': 'string',
@@ -211,12 +207,11 @@ def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
     query = sample['query']
     
     # 转换API列表格式
-    tool_descriptions, api_list_formatted = convert_api_list_to_system_format(api_list)
+    _, api_list_formatted = convert_api_list_to_system_format(api_list)
     
     # 构建system message
     api_list_json = json.dumps(api_list_formatted, ensure_ascii=False)
     system_message = SYSTEM_PROMPT_TEMPLATE.format(
-        tool_descriptions=tool_descriptions,
         api_list=api_list_json
     )
     
@@ -228,7 +223,7 @@ def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
         },
         {
             "from": "user",
-            "content": f"\n{query}\nBegin!\n"
+            "content": f"\n{query}\n"
         }
     ]
     
