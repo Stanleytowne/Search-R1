@@ -651,7 +651,7 @@ class LLMGenerationManager:
                     # The JSON string format is: {"error": "", "response": "..."}
                     function_response_json = json.dumps({"error": error, "response": response}, ensure_ascii=False)
                     # Match StableToolBench format: "Observation: {content}\n" (as in tool_llama_model.py line 117)
-                    next_obs.append(f"Observation: {function_response_json}\n")
+                    next_obs.append(f"\n\nObservation: {function_response_json}\n\n")
                     dones.append(0)
                     valid_action.append(1)
                     is_search.append(1)  # Treat API calls as search-like operations
