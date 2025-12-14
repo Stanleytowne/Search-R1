@@ -11,6 +11,8 @@ import shutil
 import requests
 import json
 import numpy as np
+import asyncio
+import httpx
 
 
 def normalize_api_name(api_name: str) -> str:
@@ -881,7 +883,26 @@ If I want to give the final answer, I should put the answer between <answer> and
     
     def batch_call_toolbench_apis(self, api_calls: List[Dict]) -> Dict[int, Dict]:
         """
-        Batch call ToolBench API server for multiple API calls.
+        Batch call ToolBench API server for multiple API calls concurrently.
+        
+        Args:
+            api_calls: List of dicts with 'index', 'action', and 'content' keys
+            
+        Returns:
+            Dict mapping example index to API response
+        """
+        # Use asyncio to run concurrent API calls
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        return loop.run_until_complete(self._batch_call_toolbench_apis_async(api_calls))
+    
+    async def _batch_call_toolbench_apis_async(self, api_calls: List[Dict]) -> Dict[int, Dict]:
+        """
+        Async implementation of batch API calls for concurrent execution.
         
         Args:
             api_calls: List of dicts with 'index', 'action', and 'content' keys
@@ -890,6 +911,10 @@ If I want to give the final answer, I should put the answer between <answer> and
             Dict mapping example index to API response
         """
         results = {}
+        
+        # Prepare all API calls first (validation and payload preparation)
+        async_tasks = []
+        task_indices = []  # Store index for each task in the same order
         
         for api_call in api_calls:
             idx = api_call['index']
@@ -924,7 +949,12 @@ If I want to give the final answer, I should put the answer between <answer> and
             # Map original_index to category
             original_idx = api_call.get('original_index', idx)
             if not hasattr(self, 'sample_categories') or original_idx not in self.sample_categories:
-                raise ValueError(f"Missing category for sample {original_idx}. Category must be provided in extra_info.")
+                results[idx] = {
+                    'error': f'Missing category for sample {original_idx}. Category must be provided in extra_info.',
+                    'response': ''
+                }
+                continue
+            
             category = self.sample_categories[original_idx]
             
             # Validate API call before sending to server
@@ -937,36 +967,87 @@ If I want to give the final answer, I should put the answer between <answer> and
                 print(f"[DEBUG] API call validation failed for action: {action_name} (tool: {tool_name}, category: {category}): {validation_error}\n")
                 continue
             
-            # Call ToolBench server
-            try:
-                payload = {
-                    'category': category,
-                    'tool_name': tool_name,
-                    'api_name': action_name,  # Use full action_name as api_name for ToolBench
-                    'tool_input': action_input,
-                    'strip': '',
-                    'toolbench_key': self.config.toolbench_key
-                }
-
-                response = requests.post(
-                    f"{self.config.toolbench_url}/virtual",
-                    json=payload,
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    results[idx] = response.json()
-                else:
+            # Prepare payload
+            payload = {
+                'category': category,
+                'tool_name': tool_name,
+                'api_name': action_name,  # Use full action_name as api_name for ToolBench
+                'tool_input': action_input,
+                'strip': '',
+                'toolbench_key': self.config.toolbench_key
+            }
+            
+            # Create async task for this API call
+            task = self._call_toolbench_api_async(
+                idx=idx,
+                url=f"{self.config.toolbench_url}/virtual",
+                payload=payload,
+                action_name=action_name,
+                tool_name=tool_name,
+                category=category,
+                action_input=action_input
+            )
+            async_tasks.append(task)
+            task_indices.append(idx)  # Store index in the same order as tasks
+        
+        # Execute all API calls concurrently
+        if async_tasks:
+            responses = await asyncio.gather(*async_tasks, return_exceptions=True)
+            
+            # Process responses
+            for idx, response in zip(task_indices, responses):
+                if isinstance(response, Exception):
                     results[idx] = {
-                        'error': f'API call failed with status {response.status_code}',
+                        'error': f'API call error: {str(response)}',
                         'response': ''
                     }
+                    print(f"[DEBUG] API call exception: {str(response)}")
+                else:
+                    results[idx] = response
+        
+        return results
+    
+    async def _call_toolbench_api_async(
+        self, 
+        idx: int, 
+        url: str, 
+        payload: Dict, 
+        action_name: str,
+        tool_name: str,
+        category: str,
+        action_input: Dict
+    ) -> Dict:
+        """
+        Async function to call a single ToolBench API.
+        
+        Args:
+            idx: Index of the API call
+            url: API endpoint URL
+            payload: Request payload
+            action_name: Name of the action
+            tool_name: Name of the tool
+            category: Category of the tool
+            action_input: Input parameters
+            
+        Returns:
+            API response dict
+        """
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                response = await client.post(url, json=payload)
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    error_msg = f'API call failed with status {response.status_code}'
                     print(f"[DEBUG] Calling ToolBench API {action_name} (tool: {tool_name}, category: {category}) with action input: {action_input} error with response status: {response.status_code}\n")
+                    return {
+                        'error': error_msg,
+                        'response': ''
+                    }
             except Exception as e:
-                results[idx] = {
+                print(f"[DEBUG] API call exception for {action_name}: {str(e)}")
+                return {
                     'error': f'API call error: {str(e)}',
                     'response': ''
                 }
-                print(f"[DEBUG] API call exception: {str(e)}")
-        
-        return results
