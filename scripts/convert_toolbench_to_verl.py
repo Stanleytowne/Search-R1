@@ -219,10 +219,12 @@ def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
     conversations = [
         {
             "from": "system",
+            "role": "system",
             "content": system_message
         },
         {
             "from": "user",
+            "role": "user",
             "content": f"\n{query}\n"
         }
     ]

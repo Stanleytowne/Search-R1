@@ -301,7 +301,7 @@ class LLMGenerationManager:
         # 打印第一条数据的input
         if gen_batch.batch['input_ids'].shape[0] > 0:
             first_input_ids = gen_batch.batch['input_ids'][0]
-            input_text = self.tokenizer.decode(first_input_ids, skip_special_tokens=False)
+            input_text = self.tokenizer.decode(first_input_ids, skip_special_tokens=True)
             print("[DEBUG] First sample input:")
             print(input_text)
         
