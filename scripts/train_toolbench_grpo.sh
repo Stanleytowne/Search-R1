@@ -2,6 +2,28 @@
 # ToolBench GRPO训练脚本
 
 set -e
+# 如果存在wandb_api.json则自动加载wandb API Key
+# 格式:
+# {
+#   "WANDB_API_KEY": "your-wandb-api-key-string"
+# }
+if [ -f "wandb_api.json" ]; then
+    WANDB_API_KEY=$(python3 -c "
+import json
+with open('wandb_api.json') as f:
+    d = json.load(f)
+print(d.get('WANDB_API_KEY', ''))
+" )
+    if [ ! -z "$WANDB_API_KEY" ]; then
+        export WANDB_API_KEY="$WANDB_API_KEY"
+        echo "Loaded WANDB_API_KEY from wandb_api.json"
+    else
+        echo "wandb_api.json found but WANDB_API_KEY is empty"
+    fi
+else
+    echo "wandb_api.json not found, using existing WANDB_API_KEY if set"
+fi
+
 
 # 配置
 export CUDA_VISIBLE_DEVICES=0,1,2,3
@@ -14,8 +36,8 @@ NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 
 # 数据路径
 DATA_DIR="${DATA_DIR:-data/toolbench}"
-TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/train.parquet}"
-VAL_FILE="${VAL_FILE:-$DATA_DIR/val.parquet}"
+TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/val_filtered.parquet}"
+VAL_FILE="${VAL_FILE:-$DATA_DIR/val_filtered.parquet}"
 
 # 模型路径
 MODEL_PATH="${MODEL_PATH:-ToolBench/ToolLLaMA-2-7b-v2}"

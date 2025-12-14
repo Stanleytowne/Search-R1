@@ -1,3 +1,5 @@
+wandb_api.json
+
 **/*.pt
 **/checkpoints
 **/wget-log
