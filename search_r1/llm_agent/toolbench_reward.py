@@ -6,11 +6,10 @@ ToolBench模式的Reward计算
 3. Finish调用奖励：最后一次是否调用Finish
 """
 
-import os
 import torch
 import re
 import json
-from typing import List, Dict, Any
+from typing import List, Dict
 from verl import DataProto
 
 
@@ -93,6 +92,9 @@ class ToolBenchRewardManager:
             valid_response_ids = response_ids[:valid_response_length] if valid_response_length > 0 else response_ids
 
             # 解码response（只解码有效部分）
+            # 注意：response_str包含模型生成的response（Thought/Action/Action Input）和observation（function调用结果）
+            # observation格式为 "Observation: {"error": "...", "response": "..."}"
+            # 虽然observation在训练时会被info_mask排除，但我们可以直接从response_str中解析来获取error信息
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
             # 调试输出（只解码有效部分）
@@ -104,12 +106,12 @@ class ToolBenchRewardManager:
                 else:
                     print("(empty)")
                 print("#" * 30)
-                print("RESPONSE (valid tokens only):")
+                print("RESPONSE (valid tokens only, excluding observation):")
                 print(response_str)
                 print("#" * 30)
             
             # 移除</s> token（如果存在）
-            response_str = response_str.replace('</s>', '').strip()
+            # response_str = response_str.replace('</s>', '').strip()
             
             # 获取原始样本索引（处理batch repeat的情况）
             # 如果batch被repeat了，需要通过index找到原始样本
@@ -123,16 +125,16 @@ class ToolBenchRewardManager:
             # 1. 格式奖励：检查是否包含正确的格式
             format_reward = self._compute_format_reward(response_str, valid_response_length)
             
-            # 2. Function call奖励：从meta_info中获取API调用结果
+            # 2. Function call奖励：从response_str中解析Observation获取API调用结果
             function_call_reward = self._compute_function_call_reward(
-                original_idx, meta_info, valid_response_length
+                response_str, valid_response_length
             )
             
             # 调试输出
             if i == 0:
+                observations = self._parse_observations(response_str)
                 print(f"[DEBUG Reward] Sample {i} (original_idx={original_idx})")
-                print(f"  api_errors keys: {list(meta_info.get('api_errors', {}).keys())}")
-                print(f"  api_errors for this sample: {meta_info.get('api_errors', {}).get(original_idx, 'NOT FOUND')}")
+                print(f"  Parsed {len(observations)} observations from response_str")
                 print(f"  function_call_reward: {function_call_reward}")
             
             # 3. Finish调用奖励：检查最后一次是否调用了Finish
@@ -147,11 +149,15 @@ class ToolBenchRewardManager:
                 self.finish_reward_weight * finish_reward
             )
             
-            # 将reward分配到最后一个有效token
+            # 将reward分配到最后一个有效response token
+            # 注意：reward_tensor的形状是(batch_size, response_length)，
+            # 这里的response_length只包含模型生成的response tokens，不包含prompt和observation
+            # observation tokens会被info_mask标记，在训练时被排除
             if valid_response_length > 0:
                 reward_tensor[i, valid_response_length - 1] = total_reward
             
             # 格式奖励可以分配到每个token（可选）
+            # 注意：这里的奖励也只加在response tokens上，observation部分已经在data.batch['responses']中被排除
             if self.format_reward_per_token > 0:
                 format_tokens_reward = self._compute_per_token_format_reward(
                     response_str, valid_response_length
@@ -173,97 +179,201 @@ class ToolBenchRewardManager:
         """
         计算格式奖励
         检查是否包含Thought/Action/Action Input格式
+        关键：需要对每次API调用（每次Thought/Action/Action Input组合）取平均，
+        防止模型通过重复调用API来获得高奖励
         """
-        # 检查是否包含完整的格式
-        has_thought = "Thought:" in response_str or "Thought:" in response_str
-        has_action = "\nAction:" in response_str or "Action:" in response_str
-        has_action_input = "\nAction Input:" in response_str or "Action Input:" in response_str
+        # 解析出所有API调用（每次Thought/Action/Action Input组合）
+        api_calls = self._parse_api_calls(response_str)
         
-        # 如果包含完整格式，给予奖励
-        if has_thought and has_action and has_action_input:
-            # 尝试解析格式是否正确
-            try:
-                thought_start = response_str.find("Thought:")
-                action_start = response_str.find("\nAction:")
-                action_input_start = response_str.find("\nAction Input:")
+        if not api_calls:
+            # 没有找到任何API调用格式
+            return 0.0
+        
+        # 对每次API调用计算格式奖励，然后取平均
+        format_scores = []
+        for api_call in api_calls:
+            score = self._evaluate_single_api_call_format(api_call)
+            format_scores.append(score)
+        
+        # 取平均值，防止重复调用API获得高奖励
+        avg_score = sum(format_scores) / len(format_scores) if format_scores else 0.0
+        return avg_score
+    
+    def _parse_api_calls(self, response_str: str) -> List[Dict[str, str]]:
+        """
+        解析response_str中的所有API调用（Thought/Action/Action Input组合）
+        
+        Returns:
+            List of dicts, each dict contains 'thought', 'action', 'action_input' fields
+        """
+        api_calls = []
+        
+        # 使用正则表达式查找所有 Thought: ... Action: ... Action Input: ... 的组合
+        # 匹配完整的API调用模式：Thought: ... \nAction: ... \nAction Input: ...
+        # 使用非贪婪匹配，直到下一个Thought:（如果有多个调用）或字符串结束
+        # 注意：需要匹配换行符的不同形式，可能是\n或\n\n
+        pattern = r'Thought:\s*(.*?)\nAction:\s*(.*?)\nAction Input:\s*(.*?)(?=\n+Thought:|$)'
+        matches = re.finditer(pattern, response_str, re.DOTALL)
+        
+        for match in matches:
+            thought_content = match.group(1).strip()
+            action_content = match.group(2).strip()
+            action_input_str = match.group(3).strip()
+            
+            # 检查是否有基本内容
+            if thought_content and action_content and action_input_str:
+                api_calls.append({
+                    'thought': thought_content,
+                    'action': action_content,
+                    'action_input': action_input_str
+                })
+        
+        return api_calls
+    
+    def _evaluate_single_api_call_format(self, api_call: Dict[str, str]) -> float:
+        """
+        评估单个API调用的格式正确性
+        
+        Args:
+            api_call: 包含 'thought', 'action', 'action_input' 的字典
+            
+        Returns:
+            格式奖励分数 (0.0 - 1.0)
+        """
+        thought = api_call.get('thought', '').strip()
+        action = api_call.get('action', '').strip()
+        action_input = api_call.get('action_input', '').strip()
+        
+        # 检查是否有基本的三个部分
+        if not thought or not action or not action_input:
+            return 0.0
+        
+        # 尝试解析Action Input是否为有效JSON
+        try:
+            # 尝试找到JSON对象
+            brace_start = action_input.find('{')
+            if brace_start != -1:
+                # 尝试解析JSON
+                brace_count = 0
+                brace_end = brace_start
+                for j in range(brace_start, min(brace_start + 2000, len(action_input))):
+                    if action_input[j] == '{':
+                        brace_count += 1
+                    elif action_input[j] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            brace_end = j + 1
+                            break
                 
-                if thought_start != -1 and action_start != -1 and action_input_start != -1:
-                    # 检查顺序是否正确
-                    if thought_start < action_start < action_input_start:
-                        # 尝试解析Action Input是否为有效JSON
-                        action_input_str = response_str[action_input_start + len("\nAction Input:"):].strip()
-                        # 尝试找到JSON对象
-                        brace_start = action_input_str.find('{')
-                        if brace_start != -1:
-                            # 尝试解析JSON
-                            brace_count = 0
-                            brace_end = brace_start
-                            for j in range(brace_start, min(brace_start + 1000, len(action_input_str))):
-                                if action_input_str[j] == '{':
-                                    brace_count += 1
-                                elif action_input_str[j] == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0:
-                                        brace_end = j + 1
-                                        break
-                            if brace_count == 0:
-                                try:
-                                    json.loads(action_input_str[brace_start:brace_end])
-                                    return 1.0  # 完整且有效的格式
-                                except json.JSONDecodeError:
-                                    return 0.5  # 格式存在但JSON无效
-                        return 0.5  # 格式存在但可能不完整
-            except Exception:
-                pass
+                if brace_count == 0:
+                    json_str = action_input[brace_start:brace_end]
+                    try:
+                        json.loads(json_str)
+                        return 1.0  # 完整且有效的格式
+                    except json.JSONDecodeError:
+                        return 0.5  # 格式存在但JSON无效
+        except Exception:
+            pass
         
-        # 部分格式奖励
-        if has_thought or has_action:
-            return 0.2
-        
-        return 0.0
+        # 部分格式奖励（有基本格式但JSON可能不完整）
+        return 0.5
     
     def _compute_per_token_format_reward(self, response_str: str, response_length: int) -> torch.Tensor:
         """
         计算每个token的格式奖励
         对于符合格式的token给予小奖励
+        
+        注意：为了与主格式奖励逻辑一致，这里也应该考虑每次API调用的平均奖励
+        但为了简化实现，这里只给一个基础的小奖励
         """
-        # 简单实现：对包含格式关键词的token给予奖励
-        # 这里需要更精细的实现，但为了简化，我们给一个小的基础奖励
         reward = torch.zeros(response_length, dtype=torch.float32)
         
-        # 如果包含格式关键词，给所有token小奖励
-        if "Thought:" in response_str or "Action:" in response_str:
-            reward.fill_(self.format_reward_per_token)
+        # 解析API调用，如果有有效的API调用，给token小奖励
+        api_calls = self._parse_api_calls(response_str)
+        if api_calls:
+            # 对每次API调用评估格式，取平均
+            avg_format_score = sum(self._evaluate_single_api_call_format(call) for call in api_calls) / len(api_calls)
+            # 将平均格式分数转换为per-token奖励
+            per_token_reward = avg_format_score * self.format_reward_per_token
+            reward.fill_(per_token_reward)
         
         return reward
     
-    def _compute_function_call_reward(self, sample_idx: int, meta_info: Dict, response_length: int) -> float:
+    def _compute_function_call_reward(self, response_str: str, response_length: int) -> float:
         """
         计算Function call奖励
         如果API调用结果有error，则惩罚
-        """
-        # 从meta_info中获取API调用结果
-        api_errors = meta_info.get('api_errors', {})
         
-        # 获取这个样本的API调用结果
-        # api_errors格式: {sample_idx: [bool, bool, ...]} 其中True表示有error
-        sample_errors = api_errors.get(sample_idx, [])
+        直接从response_str中解析Observation来获取error信息
+        Observation格式: "Observation: {"error": "...", "response": "..."}"
+        """
+        # 从response_str中解析所有Observation
+        observations = self._parse_observations(response_str)
         
         # 计算奖励：每个成功的API调用给奖励，每个错误给惩罚
         reward = 0.0
         
-        if sample_errors:
-            for has_error in sample_errors:
+        if observations:
+            for obs_json in observations:
+                has_error = bool(obs_json.get('error', '').strip())
                 if has_error:  # 如果有error
                     reward += self.error_penalty
                 else:  # 如果没有error，给小的正奖励
                     reward += 0.1
         else:
-            # 如果没有API调用，可能是格式错误或没有调用API
+            # 如果没有API调用或Observation，可能是格式错误或没有调用API
             # 不给奖励也不给惩罚（中性）
             pass
         
         return reward
+    
+    def _parse_observations(self, response_str: str) -> List[Dict]:
+        """
+        从response_str中解析所有Observation
+        
+        Observation格式: "Observation: {"error": "...", "response": "..."}"
+        
+        Returns:
+            List of observation dicts, each containing 'error' and 'response' keys
+        """
+        observations = []
+        
+        # 查找所有 "Observation:" 标签
+        pattern = r'Observation:\s*(\{.*?\})(?=\n|$)'
+        matches = re.finditer(pattern, response_str, re.DOTALL)
+        
+        for match in matches:
+            json_str = match.group(1).strip()
+            try:
+                # 尝试解析JSON（需要正确匹配大括号）
+                # 找到第一个 {，然后匹配到对应的 }
+                brace_start = json_str.find('{')
+                if brace_start != -1:
+                    brace_count = 0
+                    brace_end = brace_start
+                    for j in range(brace_start, min(brace_start + 5000, len(json_str))):
+                        if json_str[j] == '{':
+                            brace_count += 1
+                        elif json_str[j] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                brace_end = j + 1
+                                break
+                    
+                    if brace_count == 0:
+                        complete_json_str = json_str[brace_start:brace_end]
+                        obs_dict = json.loads(complete_json_str)
+                        # 确保有error字段
+                        if 'error' in obs_dict:
+                            observations.append({
+                                'error': obs_dict.get('error', ''),
+                                'response': obs_dict.get('response', '')
+                            })
+            except (json.JSONDecodeError, ValueError):
+                # JSON解析失败，跳过这个observation
+                continue
+        
+        return observations
     
     def _compute_finish_reward(self, response_str: str, sample_idx: int, meta_info: Dict, response_length: int) -> float:
         """
