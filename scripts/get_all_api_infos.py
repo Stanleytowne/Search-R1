@@ -159,17 +159,46 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
         # Extract category from api_list (use first API's category_name)
         category = api_list[0]['category_name']
         
+        # 为每个category构建去重的API信息集合（使用API的'name'作为唯一标识）
         if category not in records:
-            records[category] = []
-        records[category].extend(api_list_formatted)
+            records[category] = {}
+        for api in api_list_formatted:
+            api_name = api['name']
+            if api_name not in records[category]:
+                records[category][api_name] = api
         
         if (idx + 1) % 1000 == 0:
             print(f"Processed {idx + 1} samples...")
 
+    # 创建输出目录
+    output_dir = Path("data/api_infos")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     for category, api_list in records.items():
         print(f"Category: {category} with {len(api_list)} APIs")
 
-        json.dump(api_list, open(f"data/api_infos/{category}.json", "w"), ensure_ascii=False, indent=4)    
+        output_file = output_dir / f"{category}.json"
+        # 如果输出文件已存在，则读取已有内容，加上新的不重复的部分
+        if output_file.exists():
+            try:
+                with open(output_file, 'r', encoding='utf-8') as f:
+                    original_data = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not read existing {output_file}: {e}")
+                original_data = {}
+        else:
+            original_data = {}
+
+        # 注意：records[category]为dict，original_data假定也是dict结构。合并两个dict（保留原有的不重复内容）
+        merged_data = dict(original_data)
+        print(f"Original data length: {len(original_data)}")
+        for api_name, api_info in api_list.items():
+            if api_name not in merged_data:
+                merged_data[api_name] = api_info
+        print(f"Merged data length: {len(merged_data)}")
+        # 保存合并结果
+        with open(output_file, "w", encoding='utf-8') as f:
+            json.dump(merged_data, f, ensure_ascii=False, indent=4)
 
 def main():
     parser = argparse.ArgumentParser(description="Convert StableToolBench data to verl format")
