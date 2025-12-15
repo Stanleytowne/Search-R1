@@ -28,7 +28,7 @@ from transformers import AutoTokenizer, PreTrainedTokenizer
 
 from verl.utils.fs import copy_local_path_from_hdfs
 from verl.utils.model import compute_position_id_with_mask
-from verl.utils import set_pad_token_id
+from verl.utils.tokenizer import set_pad_token_id
 
 
 class SFTDataset(Dataset):
