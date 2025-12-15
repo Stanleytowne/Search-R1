@@ -99,7 +99,7 @@ class ToolBenchRewardManager:
                 print("#" * 30)
                 print("[DEBUG REWARD] PROMPT (valid tokens only):")
                 if valid_prompt_length > 0:
-                    print("[DEBUG REWARD] " + self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
+                    print(self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
                 else:
                     print("[DEBUG REWARD] (empty)")
                 print("#" * 30)

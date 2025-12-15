@@ -659,13 +659,13 @@ class LLMGenerationManager:
                     is_search.append(1)  # Treat API calls as search-like operations
                 elif action:
                     # Invalid API call or parsing error
-                    next_obs.append('\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n')
+                    next_obs.append('\n\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n\n')
                     dones.append(0)
                     valid_action.append(0)
                     is_search.append(0)
                 else:
                     # No action detected
-                    next_obs.append('\nMy previous action is invalid. I should provide Thought, Action, and Action Input.\n')
+                    next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
                     dones.append(0)
                     valid_action.append(0)
                     is_search.append(0)
@@ -856,7 +856,7 @@ If I want to give the final answer, I should put the answer between <answer> and
         # Check if API name exists
         if action_name not in api_list:
             available_apis = list(api_list.keys())
-            return f"Invalid API name: '{action_name}'. Available APIs: {available_apis[:5]}..."
+            return f"Invalid API name: '{action_name}'."
         
         # Get API validation info (simplified format)
         api_info = api_list[action_name]
