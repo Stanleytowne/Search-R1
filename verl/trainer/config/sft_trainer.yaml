@@ -1,6 +1,6 @@
 data:
   train_batch_size: 64
-  micro_batch_size: 8  # this is also val batch size
+  micro_batch_size: 4  # this is also val batch size
   train_files: data/api_sft_data/Sports.parquet
   val_files: data/api_sft_data/Sports.parquet
   prompt_key: prompt
