@@ -37,7 +37,7 @@ Your description:
     """You are a technical documentation expert. Your task is to convert the provided API JSON definition into a comprehensive, natural language technical reference. 
 
 Please follow these rules:
-1. **Context**: Start by stating the API category and name clearly.
+1. **Context**: Start by stating the API name clearly.
 2. **Purpose**: Explain what the API does based on its description.
 3. **Inputs**: Detail every parameter. Specify the data type, whether it is required, and its description.
 4. **Outputs**: Describe the response structure based on the `template_response`, explaining the fields and their data types.
@@ -52,9 +52,10 @@ Your technical reference:
     """Convert the provided API definition into a structured natural language summary optimized for model training.
 
 Format the output into three distinct sections:
-1. **Intent**: What user goal does this API serve? (Derive this from the description).
-2. **Action**: How is the API called? Describe the parameters, emphasizing which are mandatory and their specific constraints (e.g., "a number between 1 and 5").
-3. **Result**: What is the exact schema of the returned data? Describe the nested fields and their types found in the `template_response`.
+1. **Identity**: explicitly state the 'API Name' found in the JSON key or name field.
+2. **Intent**: What user goal does this API serve? (Derive this from the description).
+3. **Action**: How is the API called? Describe the parameters, emphasizing which are mandatory and their specific constraints (e.g., "a number between 1 and 5").
+4. **Result**: What is the exact schema of the returned data? Describe the nested fields and their types found in the `template_response`.
 
 Keep the language precise and factual.
 
@@ -107,6 +108,14 @@ def main():
                 for i, template in enumerate(PROMPT_TEMPLATES):
                     # 使用 replace 避免 format 对 json 内部 {} 的报错
                     prompt_text = template.replace("{JSON_DATA}", json_str)
+
+                    prompt_text = llm.get_tokenizer().apply_chat_template(
+                        [
+                            {"role": "user", "content": prompt_text}
+                        ], 
+                        tokenize=False, 
+                        add_generation_prompt=True
+                    )
                     
                     prompts.append(prompt_text)
                     metadata.append({
