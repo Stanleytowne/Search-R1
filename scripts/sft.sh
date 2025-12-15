@@ -1,0 +1,1 @@
+torchrun --nproc_per_node=4 verl/trainer/fsdp_sft_trainer.py
