@@ -82,7 +82,7 @@ def main():
 
     for file_path in json_files:
         file_name = os.path.basename(file_path)
-        output_path = os.path.join(OUTPUT_DIR, f"processed_{file_name}")
+        output_path = os.path.join(OUTPUT_DIR, f"{file_name}")
         
         print(f"Processing file: {file_name}...")
 
