@@ -284,10 +284,8 @@ class ToolBenchRewardManager:
         if observations:
             for obs_json in observations:
                 has_error = bool(obs_json.get('error', '').strip())
-                if has_error:  # 如果有error
-                    reward += self.error_penalty
-                else:  # 如果没有error，给小的正奖励
-                    reward += 0.1
+                if not has_error:  # 如果有error
+                    reward += 1
             
             return reward / len(observations)
         else:
@@ -360,11 +358,11 @@ class ToolBenchRewardManager:
             # 这确保了只有在execute_predictions中真正检测到Finish时才给奖励
             return_type = finish_called[sample_idx]
             if return_type == 'give_answer':
-                return self.finish_bonus
+                return 1
             elif return_type == 'give_up':
-                return self.finish_bonus * 0.5  # 部分奖励（至少调用了Finish）
+                return 0.5  # 部分奖励（至少调用了Finish）
             else:
-                return self.finish_bonus * 0.3  # Finish存在但格式可能不对
+                return 0.3  # Finish存在但格式可能不对
         
         # 如果meta_info中没有Finish记录，即使response_str中有Finish，也不给奖励
         # 因为可能是中间步骤的response，还没有真正执行Finish

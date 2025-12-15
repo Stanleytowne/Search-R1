@@ -66,7 +66,7 @@ Available Tools:
 """
 
 
-def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[Dict]]:
+def convert_api_list_to_system_format(api_list: List[Dict]) -> List[Dict]:
     """
     Convert G1_query.json format api_list to system message format.
     
@@ -82,12 +82,8 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
     
     Returns:
         (tool_descriptions, api_list_formatted): 
-        - tool_descriptions: tool description string
         - api_list_formatted: formatted API list (for JSON serialization)
     """
-    # 收集工具描述
-    tool_descriptions = []
-    seen_tools = set()
     
     # 格式化API列表
     api_list_formatted = []
@@ -95,8 +91,8 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
     for api in api_list:
         tool_name = api.get('tool_name', '')
         api_name = api.get('api_name', '')
-        category_name = api.get('category_name', '')
         api_description = api.get('api_description', '').strip()
+        template_response = api.get('template_response', {})
         
         # Build API name (format: api_name_for_tool_name)
         # Normalize both api_name and tool_name
@@ -108,21 +104,10 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
         required_params = api.get('required_parameters', [])
         optional_params = api.get('optional_parameters', [])
         
-        # 如果参数是字符串，尝试解析为列表
-        if isinstance(required_params, str):
-            try:
-                required_params = json.loads(required_params) if required_params else []
-            except:
-                required_params = []
-        if isinstance(optional_params, str):
-            try:
-                optional_params = json.loads(optional_params) if optional_params else []
-            except:
-                optional_params = []
-        
         # 构建parameters字典
         properties = {}
         required = []
+        optional = []
         
         for param in required_params:
             if isinstance(param, dict):
@@ -142,34 +127,28 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
                         'type': param.get('type', 'string'),
                         'description': param.get('description', '')
                     }
-        
+                    optional.append(param_name)
+
         parameters = {
-            'type': 'object',
             'properties': properties,
             'required': required,
-            'optional': []
+            'optional': optional
         }
         
         # 构建API信息
         api_info = {
             'name': formatted_api_name,
-            'description': f'This is the subfunction for tool "{tool_name}", you can use this tool. The description of this function is: "{api_description}"',
-            'parameters': parameters
+            'description': api_description,
+            'parameters': parameters,
+            'template_response': template_response
         }
         api_list_formatted.append(api_info)
         
-        # 收集工具描述
-        if tool_name and tool_name not in seen_tools:
-            seen_tools.add(tool_name)
-            # 这里可以添加工具描述，如果没有可以从其他地方获取
-            tool_descriptions.append(f"{tool_name}: {category_name} tool")
-    
     # 添加Finish函数
     finish_api = {
         'name': 'Finish',
         'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
         'parameters': {
-            'type': 'object',
             'properties': {
                 'return_type': {
                     'type': 'string',
@@ -181,14 +160,12 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> tuple[str, List[D
                 }
             },
             'required': ['return_type'],
-            'optional': []
+            'optional': ['final_answer']
         }
     }
     api_list_formatted.append(finish_api)
     
-    tool_descriptions_str = '\n'.join([f"{i+1}.{desc}" for i, desc in enumerate(tool_descriptions)])
-    
-    return tool_descriptions_str, api_list_formatted
+    return api_list_formatted
 
 
 def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
@@ -207,7 +184,7 @@ def convert_g1_query_to_conversations(sample: Dict) -> List[Dict]:
     query = sample['query']
     
     # 转换API列表格式
-    _, api_list_formatted = convert_api_list_to_system_format(api_list)
+    api_list_formatted = convert_api_list_to_system_format(api_list)
     
     # 构建system message
     api_list_json = json.dumps(api_list_formatted, ensure_ascii=False)
