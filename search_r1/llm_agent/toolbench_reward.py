@@ -4,14 +4,17 @@ ToolBench模式的Reward计算
 1. 格式奖励：奖励模型生成正确的格式（Thought/Action/Action Input）
 2. Function call正确奖励：如果API调用结果有error，则惩罚
 3. Finish调用奖励：最后一次是否调用Finish
+4. Pass rate奖励：基于OpenAI模型判断问题是否被正确解决
 """
 
 import torch
 import re
 import json
-from typing import List, Dict
+import os
+from typing import List, Dict, Optional
 from verl import DataProto
 
+from openai import OpenAI
 
 class ToolBenchRewardManager:
     """ToolBench模式的Reward管理器"""
@@ -22,8 +25,14 @@ class ToolBenchRewardManager:
         format_reward_weight: float = 0.1,
         function_call_reward_weight: float = 0.2,
         finish_reward_weight: float = 0.3,
+        pass_rate_reward_weight: float = 0.4,
         error_penalty: float = -0.5,
-        finish_bonus: float = 0.5,
+        finish_bonus: float = 1,
+        pass_rate_solved_reward: float = 1.0,
+        pass_rate_unsolved_reward: float = 0.0,
+        pass_rate_unsure_reward: float = 0.5,
+        eval_model: str = "gpt-3.5-turbo",
+        openai_api_key: Optional[str] = None,
         num_examine: int = 0
     ):
         """
@@ -32,17 +41,60 @@ class ToolBenchRewardManager:
             format_reward_weight: 格式奖励权重
             function_call_reward_weight: Function call奖励权重
             finish_reward_weight: Finish调用奖励权重
+            pass_rate_reward_weight: Pass rate奖励权重
             error_penalty: API调用错误的惩罚
             finish_bonus: 正确调用Finish的奖励
+            pass_rate_solved_reward: 问题被解决时的reward
+            pass_rate_unsolved_reward: 问题未解决时的reward
+            pass_rate_unsure_reward: 不确定时的reward
+            eval_model: 用于评估的OpenAI模型名称
+            openai_api_key: OpenAI API key，如果不提供则从环境变量获取
             num_examine: 打印的样本数量
         """
         self.tokenizer = tokenizer
         self.format_reward_weight = format_reward_weight
         self.function_call_reward_weight = function_call_reward_weight
         self.finish_reward_weight = finish_reward_weight
+        self.pass_rate_reward_weight = pass_rate_reward_weight
         self.error_penalty = error_penalty
         self.finish_bonus = finish_bonus
+        self.pass_rate_solved_reward = pass_rate_solved_reward
+        self.pass_rate_unsolved_reward = pass_rate_unsolved_reward
+        self.pass_rate_unsure_reward = pass_rate_unsure_reward
+        self.eval_model = eval_model
         self.num_examine = num_examine
+        
+        # 初始化OpenAI客户端
+        self.use_pass_rate_reward = pass_rate_reward_weight > 0
+        if self.use_pass_rate_reward:
+            api_key = openai_api_key or os.getenv('OPENAI_API_KEY')
+            if not api_key:
+                print("[WARNING] OpenAI API key not found. Pass rate reward will be disabled.")
+                self.use_pass_rate_reward = False
+            else:
+                self.openai_client = OpenAI(api_key=api_key)
+                # 定义评估函数schema
+                self.eval_function_schema = {
+                    "name": "check_answer_status",
+                    "description": "Check if the answer solves the query",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "answer_status": {
+                                "type": "string",
+                                "enum": ["Solved", "Unsolved", "Unsure"],
+                                "description": "Status indicating if the query is solved"
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Explanation for the answer status"
+                            }
+                        },
+                        "required": ["answer_status", "reason"]
+                    }
+                }
+        else:
+            self.openai_client = None
     
     def __call__(self, data: DataProto) -> torch.Tensor:
         """
@@ -103,12 +155,9 @@ class ToolBenchRewardManager:
                 else:
                     print("[DEBUG REWARD] (empty)")
                 print("#" * 30)
-                print("[DEBUG REWARD] RESPONSE (valid tokens only, excluding observation):")
+                print("[DEBUG REWARD] RESPONSE (including observation):")
                 print("[DEBUG REWARD] " + response_str)
                 print("#" * 30)
-            
-            # 移除</s> token（如果存在）
-            # response_str = response_str.replace('</s>', '').strip()
             
             # 获取原始样本索引（处理batch repeat的情况）
             # 如果batch被repeat了，需要通过index找到原始样本
@@ -139,11 +188,22 @@ class ToolBenchRewardManager:
                 response_str, original_idx, meta_info, valid_response_length
             )
             
+            # 4. Pass rate奖励：基于OpenAI模型判断问题是否被正确解决
+            pass_rate_reward = 0.0
+            if self.use_pass_rate_reward:
+                # 从prompt或meta_info中提取query
+                query = self._extract_query(data_item, valid_prompt_ids)
+                if query:
+                    pass_rate_reward = self._compute_pass_rate_reward(
+                        query, response_str, original_idx
+                    )
+            
             # 组合reward
             total_reward = (
                 self.format_reward_weight * format_reward +
                 self.function_call_reward_weight * function_call_reward +
-                self.finish_reward_weight * finish_reward
+                self.finish_reward_weight * finish_reward +
+                self.pass_rate_reward_weight * pass_rate_reward
             )
             
             # 将reward分配到最后一个有效response token
@@ -160,6 +220,8 @@ class ToolBenchRewardManager:
                 print(f"  Format reward: {format_reward:.3f}")
                 print(f"  Function call reward: {function_call_reward:.3f}")
                 print(f"  Finish reward: {finish_reward:.3f}")
+                if self.use_pass_rate_reward:
+                    print(f"  Pass rate reward: {pass_rate_reward:.3f}")
                 print(f"  Total reward: {total_reward:.3f}")
         
         return reward_tensor
@@ -284,10 +346,8 @@ class ToolBenchRewardManager:
         if observations:
             for obs_json in observations:
                 has_error = bool(obs_json.get('error', '').strip())
-                if has_error:  # 如果有error
-                    reward += self.error_penalty
-                else:  # 如果没有error，给小的正奖励
-                    reward += 0.1
+                if not has_error:  # 如果有error
+                    reward += 1
             
             return reward / len(observations)
         else:
@@ -360,17 +420,194 @@ class ToolBenchRewardManager:
             # 这确保了只有在execute_predictions中真正检测到Finish时才给奖励
             return_type = finish_called[sample_idx]
             if return_type == 'give_answer':
-                return self.finish_bonus
+                return 1
             elif return_type == 'give_up':
-                return self.finish_bonus * 0.5  # 部分奖励（至少调用了Finish）
+                return 0.5
             else:
-                return self.finish_bonus * 0.3  # Finish存在但格式可能不对
-        
-        # 如果meta_info中没有Finish记录，即使response_str中有Finish，也不给奖励
-        # 因为可能是中间步骤的response，还没有真正执行Finish
-        # 这样可以避免在中间步骤错误地给予Finish奖励
+                return 0.3
         
         return 0.0
+    
+    def _extract_query(self, data_item, valid_prompt_ids) -> Optional[str]:
+        """
+        从data_item中提取query
+        
+        Args:
+            data_item: DataProtoItem
+            valid_prompt_ids: 有效的prompt token ids
+            
+        Returns:
+            query字符串，如果无法提取则返回None
+        """
+        if hasattr(data_item, 'non_tensor_batch') and data_item.non_tensor_batch:
+            return data_item.non_tensor_batch['prompt'][1]['content']
+        
+        print(data_item.non_tensor_batch)
+        raise ValueError("No query found in data_item")
+    
+    def _compute_pass_rate_reward(
+        self, 
+        query: str, 
+        response_str: str, 
+        sample_idx: int
+    ) -> float:
+        """
+        计算pass rate reward，通过调用OpenAI模型判断问题是否被正确解决
+        
+        Args:
+            query: 用户的问题
+            response_str: 模型的完整输出轨迹（包含Thought/Action/Action Input/Observation）
+            sample_idx: 样本索引
+            
+        Returns:
+            reward分数 (Solved: pass_rate_solved_reward, Unsolved: pass_rate_unsolved_reward, Unsure: pass_rate_unsure_reward)
+        """
+        if not self.use_pass_rate_reward or not self.openai_client:
+            return 0.0
+        
+        try:
+            # 提取最终答案（从Finish调用中提取，或者使用最后一个有效的回答）
+            final_answer = self._extract_final_answer(response_str)
+            
+            # 如果final_answer为空，直接返回Unsolved的reward
+            if not final_answer or final_answer.strip() == '' or 'give_up' in str(final_answer).lower():
+                return self.pass_rate_unsolved_reward
+            
+            # 第一阶段：简单检查（只使用query和final_answer）
+            answer_status = self._check_answer_status_simple(query, final_answer)
+            
+            # 如果Unsure，进行详细检查（使用完整的执行轨迹）
+            if answer_status == "Unsure":
+                answer_status = self._check_answer_status_detailed(query, response_str)
+            
+            # 根据状态返回相应的reward
+            if answer_status == "Solved":
+                return self.pass_rate_solved_reward
+            elif answer_status == "Unsolved":
+                return self.pass_rate_unsolved_reward
+            else:  # Unsure
+                return self.pass_rate_unsure_reward
+                
+        except Exception as e:
+            # 如果评估失败，返回Unsure的reward（中性）
+            print(f"[WARNING] Pass rate evaluation failed for sample {sample_idx}: {e}")
+            return self.pass_rate_unsure_reward
+    
+    def _extract_final_answer(self, response_str: str) -> str:
+        """
+        从response_str中提取最终答案
+        
+        Args:
+            response_str: 完整的响应字符串
+            
+        Returns:
+            最终答案字符串
+        """
+        # 查找Finish调用中的answer
+        finish_pattern = r'Action:\s*Finish\s*\nAction Input:\s*({.*?})'
+        match = re.search(finish_pattern, response_str, re.DOTALL | re.IGNORECASE)
+        if match:
+            try:
+                finish_input = json.loads(match.group(1))
+                if 'answer' in finish_input:
+                    return str(finish_input['answer'])
+            except json.JSONDecodeError:
+                pass
+        
+        # 如果没有找到Finish，尝试提取最后一个Action Input中的answer
+        # 或者返回整个response_str的最后部分作为答案
+        return response_str.split('Action Input:')[-1].strip() if 'Action Input:' in response_str else ''
+    
+    def _check_answer_status_simple(self, query: str, final_answer: str) -> str:
+        """
+        第一阶段检查：使用query和final_answer进行简单判断
+        
+        Args:
+            query: 用户问题
+            final_answer: 最终答案
+            
+        Returns:
+            "Solved", "Unsolved", 或 "Unsure"
+        """
+        prompt_template = """Giving the query and answer, you need give `answer_status` of the answer by following rules:
+1. If the answer is a sorry message or not a positive/straight response for the given query, return "Unsolved".
+2. If the answer is a positive/straight response for the given query, you have to further check.
+2.1 If the answer is not sufficient to determine whether the solve the query or not, return "Unsure".
+2.2 If you are confident that the answer is sufficient to determine whether the solve the query or not, return "Solved" or "Unsolved".
+
+Query:
+{query}
+
+Answer:
+{answer}
+
+Now give your reason in "content" and `answer_status` of JSON to `check_answer_status`."""
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.eval_model,
+                messages=[{
+                    "role": "user",
+                    "content": prompt_template.format(query=query, answer=final_answer)
+                }],
+                tools=[{"type": "function", "function": self.eval_function_schema}],
+                tool_choice={"type": "function", "function": {"name": "check_answer_status"}},
+                temperature=0.0
+            )
+            
+            tool_call = response.choices[0].message.tool_calls[0]
+            result = json.loads(tool_call.function.arguments)
+            return result.get('answer_status', 'Unsure')
+        except Exception as e:
+            print(f"[WARNING] Simple answer status check failed: {e}")
+            return "Unsure"
+    
+    def _check_answer_status_detailed(self, query: str, response_str: str) -> str:
+        """
+        第二阶段检查：使用完整的执行轨迹进行详细判断
+        
+        Args:
+            query: 用户问题
+            response_str: 完整的响应字符串（包含所有执行细节）
+            
+        Returns:
+            "Solved", "Unsolved", 或 "Unsure"
+        """
+        prompt_template = """Giving the query and the correspond execution detail of an answer, you need give `answer_status` of the answer by following rules:
+1. If all 'tool' nodes' message indicate that there are errors happened, return "Unsolved"
+2. If you find the information in the "final_answer" is not true/valid according to the messages in 'tool' nodes, return "Unsolved"
+3. If you are unable to verify the authenticity and validity of the information, return "Unsure"
+4. If there are 'tool' node in the chain contains successful func calling and those calling indeed solve the query, return "Solved"
+
+Query:
+{query}
+
+Answer:
+{answer}
+
+Now you are requested to give reason in "content" and `answer_status` of JSON to `parse_answer_status`."""
+        
+        try:
+            response = self.openai_client.chat.completions.create(
+                model=self.eval_model,
+                messages=[{
+                    "role": "user",
+                    "content": prompt_template.format(query=query, answer=response_str)
+                }],
+                tools=[{"type": "function", "function": {
+                    **self.eval_function_schema,
+                    "name": "parse_answer_status"
+                }}],
+                tool_choice={"type": "function", "function": {"name": "parse_answer_status"}},
+                temperature=0.0
+            )
+            
+            tool_call = response.choices[0].message.tool_calls[0]
+            result = json.loads(tool_call.function.arguments)
+            return result.get('answer_status', 'Unsure')
+        except Exception as e:
+            print(f"[WARNING] Detailed answer status check failed: {e}")
+            return "Unsure"
 
 
 def create_toolbench_reward_manager(
@@ -378,15 +615,25 @@ def create_toolbench_reward_manager(
     format_reward_weight: float = 0.1,
     function_call_reward_weight: float = 0.2,
     finish_reward_weight: float = 0.3,
+    pass_rate_reward_weight: float = 0.4,
     **kwargs
 ) -> ToolBenchRewardManager:
     """
     创建ToolBench Reward Manager的工厂函数
+    
+    Args:
+        tokenizer: Tokenizer用于解码
+        format_reward_weight: 格式奖励权重
+        function_call_reward_weight: Function call奖励权重
+        finish_reward_weight: Finish调用奖励权重
+        pass_rate_reward_weight: Pass rate奖励权重（基于OpenAI模型判断）
+        **kwargs: 其他参数传递给ToolBenchRewardManager
     """
     return ToolBenchRewardManager(
         tokenizer=tokenizer,
         format_reward_weight=format_reward_weight,
         function_call_reward_weight=function_call_reward_weight,
         finish_reward_weight=finish_reward_weight,
+        pass_rate_reward_weight=pass_rate_reward_weight,
         **kwargs
     )
