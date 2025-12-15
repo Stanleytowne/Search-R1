@@ -22,7 +22,6 @@ class ToolBenchRewardManager:
         format_reward_weight: float = 0.1,
         function_call_reward_weight: float = 0.2,
         finish_reward_weight: float = 0.3,
-        format_reward_per_token: float = 0.01,
         error_penalty: float = -0.5,
         finish_bonus: float = 0.5,
         num_examine: int = 0
@@ -33,7 +32,6 @@ class ToolBenchRewardManager:
             format_reward_weight: 格式奖励权重
             function_call_reward_weight: Function call奖励权重
             finish_reward_weight: Finish调用奖励权重
-            format_reward_per_token: 每个正确格式token的奖励
             error_penalty: API调用错误的惩罚
             finish_bonus: 正确调用Finish的奖励
             num_examine: 打印的样本数量
@@ -42,7 +40,6 @@ class ToolBenchRewardManager:
         self.format_reward_weight = format_reward_weight
         self.function_call_reward_weight = function_call_reward_weight
         self.finish_reward_weight = finish_reward_weight
-        self.format_reward_per_token = format_reward_per_token
         self.error_penalty = error_penalty
         self.finish_bonus = finish_bonus
         self.num_examine = num_examine
@@ -100,14 +97,14 @@ class ToolBenchRewardManager:
             # 调试输出（只解码有效部分）
             if i == 0:
                 print("#" * 30)
-                print("PROMPT (valid tokens only):")
+                print("[DEBUG REWARD] PROMPT (valid tokens only):")
                 if valid_prompt_length > 0:
-                    print(self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
+                    print("[DEBUG REWARD] " + self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
                 else:
-                    print("(empty)")
+                    print("[DEBUG REWARD] (empty)")
                 print("#" * 30)
-                print("RESPONSE (valid tokens only, excluding observation):")
-                print(response_str)
+                print("[DEBUG REWARD] RESPONSE (valid tokens only, excluding observation):")
+                print("[DEBUG REWARD] " + response_str)
                 print("#" * 30)
             
             # 移除</s> token（如果存在）
@@ -155,14 +152,6 @@ class ToolBenchRewardManager:
             # observation tokens会被info_mask标记，在训练时被排除
             if valid_response_length > 0:
                 reward_tensor[i, valid_response_length - 1] = total_reward
-            
-            # 格式奖励可以分配到每个token（可选）
-            # 注意：这里的奖励也只加在response tokens上，observation部分已经在data.batch['responses']中被排除
-            if self.format_reward_per_token > 0:
-                format_tokens_reward = self._compute_per_token_format_reward(
-                    response_str, valid_response_length
-                )
-                reward_tensor[i, :valid_response_length] += format_tokens_reward
             
             # 打印示例（用于调试）
             if i < self.num_examine:
@@ -278,27 +267,6 @@ class ToolBenchRewardManager:
         # 部分格式奖励（有基本格式但JSON可能不完整）
         return 0.5
     
-    def _compute_per_token_format_reward(self, response_str: str, response_length: int) -> torch.Tensor:
-        """
-        计算每个token的格式奖励
-        对于符合格式的token给予小奖励
-        
-        注意：为了与主格式奖励逻辑一致，这里也应该考虑每次API调用的平均奖励
-        但为了简化实现，这里只给一个基础的小奖励
-        """
-        reward = torch.zeros(response_length, dtype=torch.float32)
-        
-        # 解析API调用，如果有有效的API调用，给token小奖励
-        api_calls = self._parse_api_calls(response_str)
-        if api_calls:
-            # 对每次API调用评估格式，取平均
-            avg_format_score = sum(self._evaluate_single_api_call_format(call) for call in api_calls) / len(api_calls)
-            # 将平均格式分数转换为per-token奖励
-            per_token_reward = avg_format_score * self.format_reward_per_token
-            reward.fill_(per_token_reward)
-        
-        return reward
-    
     def _compute_function_call_reward(self, response_str: str, response_length: int) -> float:
         """
         计算Function call奖励
@@ -320,13 +288,13 @@ class ToolBenchRewardManager:
                     reward += self.error_penalty
                 else:  # 如果没有error，给小的正奖励
                     reward += 0.1
+            
+            return reward / len(observations)
         else:
             # 如果没有API调用或Observation，可能是格式错误或没有调用API
             # 不给奖励也不给惩罚（中性）
-            pass
-        
-        return reward
-    
+            return 0.0
+
     def _parse_observations(self, response_str: str) -> List[Dict]:
         """
         从response_str中解析所有Observation
