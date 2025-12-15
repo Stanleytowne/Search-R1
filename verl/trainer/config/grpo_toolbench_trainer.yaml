@@ -9,8 +9,8 @@ data:
   max_response_length: 1024
   max_start_length: 7168
   max_obs_length: 2000
-  train_batch_size: 16
-  val_batch_size: 16
+  train_batch_size: 64
+  val_batch_size: 64
   return_raw_input_ids: False
   return_raw_chat: False
   shuffle_train_dataloader: True
@@ -25,7 +25,7 @@ actor_rollout_ref:
     use_remove_padding: True
   actor:
     strategy: fsdp
-    ppo_mini_batch_size: 4
+    ppo_mini_batch_size: 64
     ppo_micro_batch_size: 4
     use_dynamic_bsz: False
     ppo_max_token_len_per_gpu: 32768
@@ -162,7 +162,7 @@ algorithm:
 
 trainer:
   total_epochs: 15
-  total_training_steps: 1005
+  total_training_steps: 1000
   project_name: verl_toolbench
   experiment_name: toolbench_grpo
   logger: [ 'console', 'wandb' ]

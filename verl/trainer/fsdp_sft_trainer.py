@@ -292,11 +292,10 @@ class FSDPSFTTrainer(object):
         # save huggingface model
         if self.device_mesh.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            if self.config.trainer.default_hdfs_dir is not None:
-                hdfs_io.makedirs(self.config.trainer.default_hdfs_dir)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.tokenizer.save_pretrained(path)
             if self.config.trainer.default_hdfs_dir is not None:
+                hdfs_io.makedirs(self.config.trainer.default_hdfs_dir)
                 hdfs_io.copy(src=path, dst=self.config.trainer.default_hdfs_dir)
         torch.distributed.barrier()
 

@@ -36,15 +36,15 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 
 # 数据路径
-DATA_DIR="${DATA_DIR:-data/toolbench}"
-TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/val_filtered.parquet}"
-VAL_FILE="${VAL_FILE:-$DATA_DIR/val_filtered.parquet}"
+TRAIN_FILE="${TRAIN_FILE:-data/toolbench_instruction/Sports.parquet}"
+VAL_FILE="${VAL_FILE:-data/toolbench_instruction/Sports.parquet}"
 
 # 模型路径
-MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-7B-Instruct}"
+MODEL_PATH="${MODEL_PATH:-checkpoints/Sports/stage1/global_step_327}"
+
 
 # ToolBench服务器
-TOOLBENCH_URL="${TOOLBENCH_URL:-http://10.153.48.58:8080}"
+TOOLBENCH_URL="${TOOLBENCH_URL:-http://127.0.0.1:8080}"
 TOOLBENCH_KEY="${TOOLBENCH_KEY:-}"
 
 # 训练配置
@@ -63,6 +63,7 @@ FINISH_BONUS="${FINISH_BONUS:-1}"
 N_AGENT="${N_AGENT:-5}"  # 每个prompt生成的响应数
 LEARNING_RATE="${LEARNING_RATE:-5e-7}"
 LR_WARMUP_RATIO="${LR_WARMUP_RATIO:-0.285}"
+EPOCHS="${EPOCHS:-10}"
 
 echo "Starting ToolBench GRPO training..."
 echo "  Train file: $TRAIN_FILE"
@@ -102,6 +103,8 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     +trainer.val_before_train=false \
     trainer.test_freq=-1 \
+    trainer.total_epochs="$EPOCHS" \
+    trainer.save_freq=100 \
     "$@"
 
 echo ""
