@@ -341,9 +341,9 @@ def split_train_val(input_file: str, train_output: str, val_output: str,
 
 def main():
     parser = argparse.ArgumentParser(description="Convert StableToolBench data to verl format")
-    parser.add_argument("--input", type=str, default="../StableToolBench/data/instruction/G1_query.json",
+    parser.add_argument("--input", type=str, default="data/toolbench_instruction/Sports.json",
                        help="Input JSON file path")
-    parser.add_argument("--output", type=str,
+    parser.add_argument("--output", type=str, default='data/toolbench/Sports.parquet',
                        help="Output parquet file path")
     parser.add_argument("--max_samples", type=int, default=None,
                        help="Maximum number of samples to process (for testing)")
