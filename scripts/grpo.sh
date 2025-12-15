@@ -36,8 +36,8 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 
 # 数据路径
-TRAIN_FILE="${TRAIN_FILE:-data/toolbench_instruction/Sports.parquet}"
-VAL_FILE="${VAL_FILE:-data/toolbench_instruction/Sports.parquet}"
+TRAIN_FILE="${TRAIN_FILE:-data/toolbench/Sports.parquet}"
+VAL_FILE="${VAL_FILE:-data/toolbench/Sports.parquet}"
 
 # 模型路径
 MODEL_PATH="${MODEL_PATH:-checkpoints/Sports/stage1/global_step_327}"
