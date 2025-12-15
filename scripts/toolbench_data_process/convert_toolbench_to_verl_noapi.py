@@ -145,27 +145,6 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> List[Dict]:
             'template_response': template_response
         }
         api_list_formatted.append(api_info)
-        
-    # 添加Finish函数
-    finish_api = {
-        'name': 'Finish',
-        'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
-        'parameters': {
-            'properties': {
-                'return_type': {
-                    'type': 'string',
-                    'enum': ['give_answer', 'give_up']
-                },
-                'final_answer': {
-                    'type': 'string',
-                    'description': 'The final answer you want to give the user. You should have this field if "return_type"=="give_answer"'
-                }
-            },
-            'required': ['return_type'],
-            'optional': ['final_answer']
-        }
-    }
-    api_list_formatted.append(finish_api)
     
     return api_list_formatted
 
@@ -255,6 +234,8 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
         
         for api in api_list_formatted:
             api_name = api.get('name', '')
+            if api_name == 'Finish':
+                continue  # Skip Finish function
             
             api_names.append(api_name)
             params = api.get('parameters', {})
