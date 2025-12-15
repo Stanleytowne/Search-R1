@@ -43,7 +43,6 @@ from torch.distributed.device_mesh import DeviceMesh
 
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils.debug import log_gpu_memory_usage
-from peft import LoraConfig, TaskType, get_peft_model
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv('VERL_SFT_LOGGING_LEVEL', 'WARN'))
@@ -56,18 +55,6 @@ def extract_step(path):
     return None
 
 
-def convert_to_regular_types(obj):
-    """Convert Hydra configs and other special types to regular Python types."""
-    from omegaconf import ListConfig, DictConfig
-    if isinstance(obj, (ListConfig, DictConfig)):
-        return {k: convert_to_regular_types(v) for k, v in obj.items()} if isinstance(obj, DictConfig) else list(obj)
-    elif isinstance(obj, (list, tuple)):
-        return [convert_to_regular_types(x) for x in obj]
-    elif isinstance(obj, dict):
-        return {k: convert_to_regular_types(v) for k, v in obj.items()}
-    return obj
-
-
 class FSDPSFTTrainer(object):
 
     def __init__(self, config, device_mesh: DeviceMesh):
@@ -75,8 +62,10 @@ class FSDPSFTTrainer(object):
         self.device_mesh = device_mesh
         # build tokenizer first
         local_model_path = copy_local_path_from_hdfs(src=self.config.model.partial_pretrain, verbose=True)
-        from verl.utils import hf_tokenizer
-        self.tokenizer = hf_tokenizer(local_model_path, trust_remote_code=self.config.model.trust_remote_code)
+        self.tokenizer = AutoTokenizer.from_pretrained(local_model_path,
+                                                       trust_remote_code=self.config.model.trust_remote_code)
+        from verl.utils import set_pad_token_id
+        set_pad_token_id(self.tokenizer)
         if self.config.data.chat_template is not None:
             raise ValueError('Apply Chat template from config is not supported yet.')
 
@@ -88,8 +77,6 @@ class FSDPSFTTrainer(object):
         self._build_model_optimizer()
 
         # TODO: add checkpoint manager
-        if self.device_mesh.get_rank() == 0:
-            print(self.config)
 
     def _normalize_config_bsz(self):
         dp_size = self.device_mesh.size()
@@ -108,17 +95,13 @@ class FSDPSFTTrainer(object):
         self.train_dataset = SFTDataset(parquet_files=config.data.train_files,
                                         tokenizer=self.tokenizer,
                                         prompt_key=config.data.prompt_key,
-                                        prompt_dict_keys=config.data.get('prompt_dict_keys', None),
                                         response_key=config.data.response_key,
-                                        response_dict_keys=config.data.get('response_dict_keys', None),
                                         max_length=config.data.max_length,
                                         truncation=config.data.truncation)
         self.val_dataset = SFTDataset(parquet_files=config.data.val_files,
                                       tokenizer=self.tokenizer,
                                       prompt_key=config.data.prompt_key,
-                                      prompt_dict_keys=config.data.get('prompt_dict_keys', None),
                                       response_key=config.data.response_key,
-                                      response_dict_keys=config.data.get('response_dict_keys', None),
                                       max_length=config.data.max_length,
                                       truncation=config.data.truncation)
 
@@ -133,8 +116,6 @@ class FSDPSFTTrainer(object):
         self.train_dataloader = DataLoader(dataset=self.train_dataset,
                                            batch_size=config.data.train_batch_size,
                                            sampler=self.train_sampler,
-                                           num_workers=8,
-                                           pin_memory=True,
                                            drop_last=True)
 
         self.val_sampler = DistributedSampler(self.val_dataset,
@@ -145,8 +126,6 @@ class FSDPSFTTrainer(object):
         self.val_dataloader = DataLoader(dataset=self.val_dataset,
                                          batch_size=config.data.micro_batch_size,
                                          sampler=self.val_sampler,
-                                         num_workers=8,
-                                         pin_memory=True,
                                          drop_last=True)
 
     def _build_model_optimizer(self):
@@ -175,17 +154,6 @@ class FSDPSFTTrainer(object):
                                                                                torch_dtype=torch.float32,
                                                                                attn_implementation='flash_attention_2',
                                                                                trust_remote_code=trust_remote_code)
-            if self.config.model.get('lora_rank', 0) > 0:
-                self.model.enable_input_require_grads()
-                # Convert config to regular Python types before creating PEFT model
-                lora_config = {
-                    'task_type': TaskType.CAUSAL_LM,
-                    'r': self.config.model.lora_rank,
-                    'lora_alpha': self.config.model.lora_alpha,
-                    'target_modules': convert_to_regular_types(self.config.model.target_modules),
-                    'bias': "none"
-                }
-                self.model = get_peft_model(self.model, LoraConfig(**lora_config))
 
         if self.config.model.enable_gradient_checkpointing:
             self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
@@ -196,9 +164,7 @@ class FSDPSFTTrainer(object):
                                          reduce_dtype=torch.float32,
                                          buffer_dtype=torch.float32)
 
-        auto_wrap_policy = get_fsdp_wrap_policy(self.model,
-                                                config=self.config.model.fsdp_config.wrap_policy,
-                                                is_lora=self.config.model.get('lora_rank', 0) > 0)
+        auto_wrap_policy = get_fsdp_wrap_policy(self.model, config=self.config.model.fsdp_config.wrap_policy)
         if self.device_mesh.get_rank() == 0:
             print(auto_wrap_policy)
 
@@ -286,11 +252,9 @@ class FSDPSFTTrainer(object):
 
         micro_batches = batch.split(self.config.data.micro_batch_size)
         n_micro_batches = len(micro_batches)
-        step_loss = 0
         for micro_batch in micro_batches:
             loss = self._compute_loss(batch=micro_batch) / n_micro_batches
             loss.backward()
-            step_loss += loss.item()
 
         self.fsdp_model.clip_grad_norm_(max_norm=self.config.optim.clip_grad)
 
@@ -307,9 +271,8 @@ class FSDPSFTTrainer(object):
 
         log_gpu_memory_usage('After offload weights', logger=logger)
 
-        step_loss = torch.tensor(step_loss).cuda()
-        torch.distributed.all_reduce(step_loss, op=torch.distributed.ReduceOp.AVG)
-        return {'train/loss': step_loss.detach().item(), 'train/lr(1e-3)': lr * 1e3}
+        # TODO: all reduce to get accurate loss
+        return {'train/loss': loss.detach().item(), 'train/lr(1e-3)': lr * 1e3}
 
     def validation_step(self, batch: TensorDict):
         self.fsdp_model.eval()
@@ -329,11 +292,10 @@ class FSDPSFTTrainer(object):
         # save huggingface model
         if self.device_mesh.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
+            hdfs_io.makedirs(self.config.trainer.default_hdfs_dir)
             self.model.save_pretrained(path, state_dict=state_dict)
             self.tokenizer.save_pretrained(path)
-            if self.config.trainer.default_hdfs_dir:
-                hdfs_io.makedirs(self.config.trainer.default_hdfs_dir, exist_ok=True)
-                hdfs_io.copy(src=path, dst=self.config.trainer.default_hdfs_dir, dirs_exist_ok=True)
+            hdfs_io.copy(src=path, dst=self.config.trainer.default_hdfs_dir)
         torch.distributed.barrier()
 
     def fit(self):
@@ -346,30 +308,8 @@ class FSDPSFTTrainer(object):
                                 default_backend=self.config.trainer.logger)
 
         global_step = 0
-        # compute the total training steps.
-        # the total training steps in SFT is mainly for early exit
-        total_training_steps = len(self.train_dataloader) * self.config.trainer.total_epochs
-
-        if self.config.trainer.total_training_steps is not None:
-            total_training_steps = self.config.trainer.total_training_steps
-
-        self.total_training_steps = total_training_steps
-        print(f'Total training steps: {self.total_training_steps}')
 
         # TODO (zhangchi.usc1992) add back checkpoint manager. Currently, it blocks when uploading to hdfs. So very slow.
-
-        if self.config.trainer.validate_before_training:
-            # validate before training
-            val_losses = []
-            for data in self.val_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).cuda()
-                val_loss = self.validation_step(data)
-                val_losses.append(val_loss)
-            if rank == 0:
-                val_loss = torch.mean(torch.stack(val_losses))
-                metric = {'val/loss': val_loss.detach().item()}
-                tracking.log(data=metric, step=global_step)
-            torch.distributed.barrier()
 
         for epoch in range(self.config.trainer.total_epochs):
             self.train_sampler.set_epoch(epoch=epoch)
@@ -379,24 +319,6 @@ class FSDPSFTTrainer(object):
                 if rank == 0:
                     tracking.log(data=metric, step=global_step)
                 global_step += 1
-
-                # for early exit validation
-                if global_step >= self.total_training_steps:
-                    # Perform final validation
-                    val_losses = []
-                    for val_data in self.val_dataloader:
-                        val_data = TensorDict(val_data, batch_size=self.config.data.micro_batch_size).cuda()
-                        val_loss = self.validation_step(val_data)
-                        val_losses.append(val_loss)
-                    if rank == 0:
-                        avg_val_loss = torch.mean(torch.stack(val_losses))
-                        metric = {'val/loss': avg_val_loss.detach().item()}
-                        tracking.log(data=metric, step=global_step)
-                    torch.distributed.barrier()
-
-                    # Save final checkpoint
-                    self.save_checkpoint(step=global_step)
-                    return
 
             # validation
             val_losses = []
@@ -427,6 +349,7 @@ def main(config):
     local_rank, rank, world_size = initialize_global_process_group()
 
     device_mesh = init_device_mesh(device_type='cuda', mesh_shape=(world_size,), mesh_dim_names=('dp',))
+
     trainer = FSDPSFTTrainer(config=config, device_mesh=device_mesh)
     trainer.fit()
 
