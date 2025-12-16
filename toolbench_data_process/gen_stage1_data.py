@@ -3,6 +3,7 @@ import json
 import glob
 import random
 import pandas as pd
+import argparse
 from vllm import LLM, SamplingParams
 
 # ================= 1. vLLM 生成用的 Prompt (Teacher Prompts) =================
