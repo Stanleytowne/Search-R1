@@ -263,9 +263,6 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
         }
         
         records.append(record)
-        
-        if (idx + 1) % 1000 == 0:
-            print(f"Processed {idx + 1} samples...")
     
     df = pd.DataFrame(records)
     

@@ -26,5 +26,4 @@ echo "[5] Generating rl data for category Sports"
 
 python toolbench_data_process/gen_rl_data.py \
     --input ./data/toolbench_instruction/Sports.json \
-    --output ./data/toolbench_rl/Sports.parquet \
-    --split
+    --output ./data/toolbench_rl/Sports.parquet
