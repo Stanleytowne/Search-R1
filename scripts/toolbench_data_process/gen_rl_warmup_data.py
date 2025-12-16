@@ -1,0 +1,178 @@
+import json
+import os
+import glob
+import pandas as pd
+import re
+
+SYSTEM_PROMPT = """You are an intelligent agent designed to handle real-time user queries using a variety of tools.
+
+First, you will receive a task description. Then, you will enter a loop of reasoning and acting to complete the task.
+
+At each step, follow this process:
+1. **Thought**: Analyze the current status and determine the next logical step.
+2. **Action**: Select the appropriate tool to execute that step and output the function name directly.
+3. **Action Input**: Provide the arguments for the tool as a STRICT valid JSON object.
+
+Output Format:
+Thought: <your reasoning>
+Action: <function_name>
+Action Input: <function_arguments_as_a_valid_JSON_object>
+
+After the action is executed, you will receive the result (Observation). Based on the new state, continue the loop until the task is complete.
+
+Constraints & Rules:
+1. **Action Field**: The "Action" output must be the EXACT name of the function. Do NOT include parentheses `()`, words like "call" or "use", or any punctuation.
+2. **Finishing**: You MUST call the "Finish" function to submit your final answer. 
+3. **Failure**: If you cannot complete the task or verify that a tool is broken after retries, call "Finish" with "return_type" as "give_up".
+
+Available Tools:
+1. **General Tools**: You have been trained on a specific set of APIs. You must rely on your **internal knowledge** to recall the correct function names and parameter schemas for these tools. Do not hallucinate tools that do not exist in your training data.
+2. **Termination Tool**: You MUST use the following tool to finish the task. Its definition is provided below:
+{"name": "Finish", "description": "If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.", "parameters": {"properties": {"return_type": {"type": "string", "enum": ["give_answer", "give_up"]}, "final_answer": {"type": "string", "description": "The final answer you want to give the user. You should have this field if 'return_type'=='give_answer'"}}}, "required": ["return_type"], "optional": ["final_answer"]}
+"""
+
+def process_data_to_parquet(json_folder_path, mapping_file_path, output_folder):
+    """
+    将指定文件夹下的JSON数据根据category分类并保存为parquet文件
+    """
+    
+    # ---------------------------------------------------------
+    # 第一步：构建 ID 到 Category 的映射表
+    # ---------------------------------------------------------
+    print(f"正在读取映射文件: {mapping_file_path} ...")
+    id_to_category = {}
+    
+    try:
+        with open(mapping_file_path, 'r', encoding='utf-8') as f:
+            mapping_data = json.load(f)
+            
+        for item in mapping_data:
+            q_id = item.get('query_id')
+            api_list = item.get('api_list', [])
+            
+            # 取出第一个 api 的 category_name，如果没有则标记为 Uncategorized
+            if api_list and len(api_list) > 0:
+                category = api_list[0].get('category_name', 'Uncategorized')
+            else:
+                category = 'Uncategorized'
+            
+            # 确保 ID 是 int 类型 (假设文件名里的ID能转成int)
+            id_to_category[q_id] = category
+            
+        print(f"映射表构建完成，共包含 {len(id_to_category)} 个 ID。")
+        
+    except Exception as e:
+        print(f"读取映射文件失败: {e}")
+        return
+
+    # ---------------------------------------------------------
+    # 第二步：遍历数据文件夹并提取数据
+    # ---------------------------------------------------------
+    # 匹配文件名格式: [id]_ChatGPT_DFS_woFilter_w2.json
+    file_pattern = os.path.join(json_folder_path, "*_ChatGPT_DFS_woFilter_w2.json")
+    files = glob.glob(file_pattern)
+    
+    print(f"找到 {len(files)} 个数据文件，开始处理...")
+    
+    # 用于临时存储数据： { "Logistics": [ {row1}, {row2} ], "Finance": [...] }
+    data_buffer = {}
+
+    for file_path in files:
+        filename = os.path.basename(file_path)
+        
+        # 1. 从文件名提取 ID
+        # 假设文件名开头就是 ID，例如 "100_ChatGPT_..." -> 提取 "100"
+        try:
+            file_id_str = filename.split('_')[0]
+            file_id = int(file_id_str)
+        except ValueError:
+            print(f"跳过文件 {filename}: 无法从文件名提取整数 ID")
+            continue
+
+        # 2. 获取 Category
+        category = id_to_category.get(file_id, "Unknown_Category")
+        
+        # 3. 读取并解析 JSON 内容
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = json.load(f)
+            
+            # 定位 answer_generation 块
+            ans_gen = content.get('answer_generation', {})
+            
+            # 获取 Prompt (Query)
+            prompt = ans_gen.get('query', '')
+            
+            # 获取 System Prompt 和 Response
+            # 规则：train_messages 中的第一条 list (message chain)
+            train_msgs_groups = ans_gen.get('train_messages', [])
+            
+            if not train_msgs_groups:
+                continue # 数据不完整，跳过
+
+            first_msg_chain = train_msgs_groups[0] # 取第一组对话
+            
+            assistant_response = ""
+            
+            # 遍历对话链找到 system 和第一个 assistant
+            for msg in first_msg_chain:
+                role = msg.get('role')
+                text = msg.get('content')
+                
+                if role == 'assistant':
+                    assistant_response = text
+                    break 
+            
+            row = {
+                'system': SYSTEM_PROMPT,
+                'prompt': prompt,
+                'response': assistant_response,
+                'source_id': file_id
+            }
+            
+            if category not in data_buffer:
+                data_buffer[category] = []
+            
+            data_buffer[category].append(row)
+
+        except Exception as e:
+            print(f"处理文件 {filename} 时出错: {e}")
+
+    # ---------------------------------------------------------
+    # 第三步：保存为 Parquet 文件
+    # ---------------------------------------------------------
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    print("开始写入 Parquet 文件...")
+    
+    for category, rows in data_buffer.items():
+        # 清理 category 名称，使其适合作为文件名 (去除空格和非法字符)
+        safe_filename = re.sub(r'[\\/*?:"<>| ]', '_', category)
+        output_path = os.path.join(output_folder, f"{safe_filename}.parquet")
+        
+        df = pd.DataFrame(rows)
+        # 写入 parquet
+        try:
+            df.to_parquet(output_path, index=False)
+        except Exception as e:
+            print(f"写入文件 {output_path} 时出错: {e}")
+            breakpoint()
+        print(f"-> 已保存: {output_path} (包含 {len(df)} 条数据)")
+
+    print("全部处理完成。")
+
+# =========================================================
+# 配置路径并运行
+# =========================================================
+if __name__ == "__main__":
+    # 1. 你的数据文件夹路径
+    DATA_DIR = r"../StableToolBench/data/answer/G1_answer" 
+    
+    # 2. 你的 G1_query.json 路径
+    MAPPING_FILE = r"../StableToolBench/data/instruction/G1_query.json"
+    
+    # 3. 输出 Parquet 文件的文件夹
+    OUTPUT_DIR = r"./data/rl_warmup_data"
+
+    process_data_to_parquet(DATA_DIR, MAPPING_FILE, OUTPUT_DIR)
