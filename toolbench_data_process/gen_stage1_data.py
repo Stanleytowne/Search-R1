@@ -75,19 +75,19 @@ NAME_TO_JSON_TEMPLATES = [
     "Get the JSON schema for `{name}`."
 ]
 
-def main():
-    print(f"Loading model from {MODEL_PATH}...")
-    llm = LLM(model=MODEL_PATH, tensor_parallel_size=TENSOR_PARALLEL_SIZE)
-    sampling_params = SamplingParams(temperature=TEMPERATURE, max_tokens=MAX_TOKENS)
+def main(args):
+    print(f"Loading model from {args.model}...")
+    llm = LLM(model=args.model, tensor_parallel_size=args.tensor_parallel_size)
+    sampling_params = SamplingParams(temperature=args.temperature, max_tokens=args.max_tokens)
 
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
 
-    json_files = glob.glob(os.path.join(INPUT_DIR, "*.json"))
+    json_files = glob.glob(os.path.join(args.input, "*.json"))
     
     for file_path in json_files:
         file_name = os.path.basename(file_path)
-        output_path = os.path.join(OUTPUT_DIR, f"{file_name.replace('.json', '.parquet')}")
+        output_path = os.path.join(args.output, f"{file_name.replace('.json', '.parquet')}")
         print(f"Processing file: {file_name}...")
 
         try:
@@ -135,13 +135,13 @@ def main():
                 generated_answer = output.outputs[0].text.strip()
                 
                 # 1. 名字 -> 自然语言解释 (循环 N 次)
-                for _ in range(NUM_NAME_NL_PAIRS):
+                for _ in range(args.num_name_nl_pairs):
                     template = random.choice(NAME_QUERY_TEMPLATES)
                     q_text = safe_format(template, name=meta['api_name'])
                     data_rows.append({"prompt": q_text, "response": generated_answer, "source": "name_query"})
 
                 # 2. 意图 -> 自然语言解释 (循环 N 次) -> 【重点】
-                for _ in range(NUM_INTENT_NL_PAIRS):
+                for _ in range(args.num_intent_nl_pairs):
                     template = random.choice(INTENT_QUERY_TEMPLATES)
                     q_text = safe_format(template, description=meta['description'])
                     data_rows.append({"prompt": q_text, "response": generated_answer, "source": "intent_query"})
@@ -154,13 +154,13 @@ def main():
                 clean_desc = raw_desc if raw_desc else f"use {api_name}"
 
                 # 3. 名字 -> Raw JSON (循环 N 次)
-                for _ in range(NUM_NAME_JSON_PAIRS):
+                for _ in range(args.num_name_json_pairs):
                     template = random.choice(NAME_TO_JSON_TEMPLATES)
                     q_text = safe_format(template, name=api_name)
                     data_rows.append({"prompt": q_text, "response": json_str, "source": "raw_json_name"})
 
                 # 4. 意图 -> Raw JSON (循环 N 次)
-                for _ in range(NUM_INTENT_JSON_PAIRS):
+                for _ in range(args.num_intent_json_pairs):
                     template = random.choice(INTENT_TO_JSON_TEMPLATES)
                     q_text = safe_format(template, description=clean_desc)
                     data_rows.append({"prompt": q_text, "response": json_str, "source": "raw_json_intent"})
@@ -170,7 +170,7 @@ def main():
             # 随机打乱
             df = df.sample(frac=1).reset_index(drop=True)
             
-            print(f"Generated {len(df)} diverse samples for {file_name}")
+            print(f"Generated {len(df)} diverse samples for {args.input}")
             df.to_parquet(output_path, index=False)
             print(f"Saved to {output_path}")
 
@@ -210,4 +210,4 @@ if __name__ == "__main__":
                        help="Num intent JSON pairs")
     args = parser.parse_args()
     
-    main()
+    main(args)
