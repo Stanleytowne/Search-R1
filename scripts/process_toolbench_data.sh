@@ -1,10 +1,6 @@
 echo "[1] Collecting all APIs information and organize them into categories"
 
-python toolbench_data_process/get_all_api_infos.py \
-    --input ../StableToolBench/data/instruction/G1_query.json
-
-python toolbench_data_process/get_all_api_infos.py \
-    --input ../StableToolBench/data/instruction/G2_query.json
+python toolbench_data_process/get_all_api_infos.py
 
 echo "[2] Generating data for knowledge injection"
 

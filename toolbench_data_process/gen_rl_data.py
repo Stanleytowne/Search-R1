@@ -332,16 +332,12 @@ def main():
                        help="Split into train/val sets")
     parser.add_argument("--train_ratio", type=float, default=0.9,
                        help="Ratio of training data (when using --split)")
-    parser.add_argument("--train_output", type=str, default='data/toolbench/train.parquet',
-                       help="Training set output path (when using --split)")
-    parser.add_argument("--val_output", type=str, default='data/toolbench/val.parquet',
-                       help="Validation set output path (when using --split)")
     
     args = parser.parse_args()
     
     if args.split:
-        train_output = args.train_output or args.output.replace(".parquet", "_train.parquet")
-        val_output = args.val_output or args.output.replace(".parquet", "_val.parquet")
+        train_output = args.output.replace(".parquet", "_train.parquet")
+        val_output = args.output.replace(".parquet", "_val.parquet")
         
         split_train_val(
             input_file=args.input,

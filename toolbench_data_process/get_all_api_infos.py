@@ -199,18 +199,20 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
             json.dump(merged_data, f, ensure_ascii=False, indent=4)
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert StableToolBench data to verl format")
-    parser.add_argument("--input", type=str, default="../StableToolBench/data/instruction/G1_query.json",
-                       help="Input JSON file path")
-    parser.add_argument("--max_samples", type=int, default=None,
-                       help="Maximum number of samples to process (for testing)")
-    
-    args = parser.parse_args()
-    
-    process_toolbench_json(
-        input_file=args.input,
-        max_samples=args.max_samples
-    )
+    input_files = [
+        "../StableToolBench/data/instruction/G1_query.json",
+        "../StableToolBench/data/instruction/G2_query.json",
+        "../StableToolBench/solvable_queries/test_instruction/G1_category.json",
+        "../StableToolBench/solvable_queries/test_instruction/G1_instruction.json",
+        "../StableToolBench/solvable_queries/test_instruction/G1_tool.json",
+        "../StableToolBench/solvable_queries/test_instruction/G2_category.json",
+        "../StableToolBench/solvable_queries/test_instruction/G2_instruction.json",
+    ]
+
+    for input_file in input_files:
+        process_toolbench_json(
+            input_file=input_file
+        )
 
 
 if __name__ == "__main__":
