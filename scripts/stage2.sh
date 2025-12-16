@@ -22,7 +22,6 @@ CONFIG_FILE=verl/trainer/config/sft_trainer.yaml
 EXPERIMENT_NAME=toolbench_stage2_$(date +%Y%m%d_%H%M%S)
 WANDB_PROJECT=Search-R1-stage2
 TOTAL_EPOCHS=1
-NUM_GPUS=4
 LR=1e-5
 BATCH_SIZE=64
 MICRO_BATCH_SIZE=4
@@ -41,7 +40,6 @@ torchrun --nproc_per_node=4 verl/trainer/fsdp_sft_trainer.py \
     optim.lr="$LR" \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.project_name="$WANDB_PROJECT" \
-    trainer.n_gpus_per_node="$NUM_GPUS" \
     trainer.total_epochs="$TOTAL_EPOCHS" \
     trainer.default_local_dir="checkpoints/$EXPERIMENT_NAME" \
     "$@"
