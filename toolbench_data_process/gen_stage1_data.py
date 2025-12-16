@@ -49,23 +49,24 @@ NAME_QUERY_TEMPLATES = [
     "What does the `{name}` function do?"
 ]
 
-# [Type B] Description -> Usage (重点)
+# [Type B] Description -> Usage (引用模式，不再强行造句)
 INTENT_QUERY_TEMPLATES = [
-    "I need to {description}. Which tool should I use and how?",
-    "Is there an API available to {description}? Please explain how to call it.",
-    "What is the best way to {description} using the available tools?",
-    "I want to {description}. Can you provide the API name and parameter details?",
-    "Task: {description}. \nQuestion: Which function supports this and what is its schema?",
-    "Help me {description} by identifying the correct API and its usage.",
-    "Search for a tool that can {description} and show me how to use it.",
-    "Find an API that helps with {description}."
+    # 直接引用描述，询问名字和用法
+    "Which API has the description: \"{description}\"?",
+    "I am looking for the tool described as: \"{description}\". How do I use it?",
+    "Find the API with the following functionality: \"{description}\".",
+    "What is the name and usage of the API that matches this description: \"{description}\"?",
+    "Given the description \"{description}\", which tool should I call?",
+    "Identify the API defined by: \"{description}\" and explain its parameters.",
+    # 模拟检索场景
+    "Search for the tool with description: \"{description}\"."
 ]
 
-# [Type C] Description -> Raw JSON
+# [Type C] Description -> Raw JSON (引用模式)
 INTENT_TO_JSON_TEMPLATES = [
-    "Show me the raw JSON definition for the tool that allows me to {description}.",
-    "I need the schema for the API designed to {description}. Output it in JSON.",
-    "Find the tool for '{description}' and give me its original definition."
+    "Show me the raw JSON definition for the tool described as: \"{description}\".",
+    "Return the JSON schema for the API with the description: \"{description}\".",
+    "What is the underlying definition for the tool having this description: \"{description}\"?"
 ]
 
 # [Type D] Name -> Raw JSON
