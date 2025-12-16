@@ -65,6 +65,9 @@ class SFTDataset(Dataset):
         self._download()
         self._read_files_and_tokenize()
 
+        # for debug
+        self.first = True
+
     def _download(self):
         for i, parquet_file in enumerate(self.parquet_files):
             self.parquet_files[i] = copy_local_path_from_hdfs(parquet_file, verbose=True)
@@ -101,6 +104,12 @@ class SFTDataset(Dataset):
         # string
         prompt_chat_str = tokenizer.apply_chat_template(prompt_chat, add_generation_prompt=True, tokenize=False)
         response_chat_str = response + tokenizer.eos_token
+
+        # for debug
+        if self.first:
+            print(f"prompt: {prompt_chat_str}")
+            print(f"response: {response_chat_str}")
+            self.first = False
 
         # tokenize
         prompt_ids_output = tokenizer(prompt_chat_str, return_tensors='pt', add_special_tokens=False)
