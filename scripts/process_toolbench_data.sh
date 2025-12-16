@@ -16,9 +16,7 @@ python toolbench_data_process/gen_stage2_data.py \
     --mapping ../StableToolBench/data/instruction/G2_query.json \
     --output ./data/toolbench_stage2
 
-python toolbench_data_process/organize_instruction.py \
-    --input ../StableToolBench/data/instruction \
-    --output ./data/toolbench_instruction
+python toolbench_data_process/organize_instruction.py
 
 python toolbench_data_process/gen_rl_data.py \
     --input ./data/toolbench_instruction/Sports.json \

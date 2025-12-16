@@ -4,6 +4,9 @@ import re
 import argparse
 from collections import defaultdict
 
+DATA_DIR = "../StableToolBench/data/instruction"
+OUTPUT_DIR = "./data/toolbench_instruction"
+
 def sanitize_filename(name):
     """
     清洗文件名，去掉非法字符（如 / \ : * ? " < > |），将空格转为下划线
@@ -45,10 +48,6 @@ def save_grouped_data(grouped_data, base_folder):
     print(f"完成！共生成 {count} 个分类文件。")
 
 def process_files(files):
-    """
-    处理 G2 系列文件：
-    1. 按 Category Name 分类 (G2 是类内多工具，所有工具属于同一类)
-    """
     by_category = defaultdict(list)
     
     all_items = []
@@ -92,21 +91,4 @@ def main():
     print(f"\n全部完成！请检查文件夹: {os.path.abspath(OUTPUT_DIR)}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--input", type=str, default="../StableToolBench/data/instruction",
-                       help="Input JSON file path")
-    parser.add_argument("--output", type=str, default="./data/toolbench_instruction",
-                       help="Output file path")
-    args = parser.parse_args()
-
-    DATA_DIR = args.input
-    OUTPUT_DIR = args.output
-
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-
-    process_files(files)
-
-    print(f"\n全部完成！请检查文件夹: {os.path.abspath(OUTPUT_DIR)}")
-
     main()
