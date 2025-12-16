@@ -166,9 +166,6 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
             api_name = api['name']
             if api_name not in records[category]:
                 records[category][api_name] = api
-        
-        if (idx + 1) % 1000 == 0:
-            print(f"Processed {idx + 1} samples...")
 
     # 创建输出目录
     output_dir = Path("data/api_infos")

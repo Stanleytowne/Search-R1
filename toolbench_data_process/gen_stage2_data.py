@@ -203,17 +203,15 @@ def process_data_to_parquet(json_folder_path, mapping_file_path, output_folder):
 
     print("全部处理完成。")
 
-# =========================================================
-# 配置路径并运行
-# =========================================================
 if __name__ == "__main__":
-    # 1. 你的数据文件夹路径
-    DATA_DIR = r"../StableToolBench/data/answer/G1_answer" 
-    
-    # 2. 你的 G1_query.json 路径
-    MAPPING_FILE = r"../StableToolBench/data/instruction/G1_query.json"
-    
-    # 3. 输出 Parquet 文件的文件夹
-    OUTPUT_DIR = r"./data/rl_warmup_data"
 
-    process_data_to_parquet(DATA_DIR, MAPPING_FILE, OUTPUT_DIR)
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument("--input", type=str, default="../StableToolBench/data/answer/G1_answer",
+                       help="Input answer file path")
+    parser.add_argument("--mapping", type=str, default="../StableToolBench/data/instruction/G1_query.json",
+                       help="Input mapping file path")
+    parser.add_argument("--output", type=str, default="./data/toolbench_stage2",
+                       help="Output file path")
+    args = parser.parse_args()
+
+    process_data_to_parquet(args.input, args.mapping, args.output)
