@@ -102,6 +102,8 @@ def process_data_to_parquet(json_folder_path, mapping_file_path, output_folder):
             
             # 获取 Prompt (Query)
             prompt = ans_gen.get('query', '')
+            if type(prompt) == list:
+                prompt = prompt[0]
             
             # 获取 System Prompt 和 Response
             # 规则：train_messages 中的第一条 list (message chain)
@@ -113,27 +115,52 @@ def process_data_to_parquet(json_folder_path, mapping_file_path, output_folder):
             first_msg_chain = train_msgs_groups[0] # 取第一组对话
             
             assistant_response = ""
+            valid = True
             
             # 遍历对话链找到 system 和第一个 assistant
             for msg in first_msg_chain:
                 role = msg.get('role')
-                text = msg.get('content')
                 
                 if role == 'assistant':
+                    thought = msg['content']
+                    if 'error' in thought.lower():
+                        # print(thought)
+                        valid = False
+                        break
+
+                    function_call = msg.get('function_call')
+                    if function_call:
+                        action = function_call['name']
+                        action_input = function_call['arguments']
+                        try:
+                            action_input = json.loads(action_input)
+                        except Exception as e:
+                            print(f"parsing action input error for query id {file_id}")
+                            break
+                    else:
+                        continue
+                    
+                    text = f"Thought: {thought}\nAction: {action}\nAction Input: {json.dumps(action_input)}"
                     assistant_response = text
-                    break 
+                
+                if role == 'function' and assistant_response != "":
+                    function_response = json.loads(msg['content'])
+                    if function_response['error'] != "":
+                        valid = False
+                    break
             
-            row = {
-                'system': SYSTEM_PROMPT,
-                'prompt': prompt,
-                'response': assistant_response,
-                'source_id': file_id
-            }
-            
-            if category not in data_buffer:
-                data_buffer[category] = []
-            
-            data_buffer[category].append(row)
+            if valid:
+                row = {
+                    'system': SYSTEM_PROMPT,
+                    'prompt': prompt,
+                    'response': assistant_response,
+                    'source_id': file_id
+                }
+                
+                if category not in data_buffer:
+                    data_buffer[category] = []
+                
+                data_buffer[category].append(row)
 
         except Exception as e:
             print(f"处理文件 {filename} 时出错: {e}")
@@ -145,18 +172,32 @@ def process_data_to_parquet(json_folder_path, mapping_file_path, output_folder):
         os.makedirs(output_folder)
 
     print("开始写入 Parquet 文件...")
-    
+
     for category, rows in data_buffer.items():
         # 清理 category 名称，使其适合作为文件名 (去除空格和非法字符)
         safe_filename = re.sub(r'[\\/*?:"<>| ]', '_', category)
         output_path = os.path.join(output_folder, f"{safe_filename}.parquet")
-        
+
         df = pd.DataFrame(rows)
-        # 写入 parquet
+
+        # 如果 parquet 文件已经存在，则读取旧数据，与新数据合并后保存
+        if os.path.exists(output_path):
+            try:
+                old_df = pd.read_parquet(output_path)
+                df = pd.concat([old_df, df], ignore_index=True)
+            except Exception as e:
+                print(f"读取已存在的 Parquet 文件 {output_path} 时出错: {e}")
+                print("将只写入新的数据。")
+
         try:
             df.to_parquet(output_path, index=False)
         except Exception as e:
             print(f"写入文件 {output_path} 时出错: {e}")
+            prompts = df['prompt'].to_list()
+            for idx, prompt in enumerate(prompts):
+                if type(prompt) != str:
+                    print(f"第 {idx} 条数据的 prompt 不是字符串: {prompt}")
+                    print(f"source idx: {df.iloc[idx].get('source_id', '未知')}")
             breakpoint()
         print(f"-> 已保存: {output_path} (包含 {len(df)} 条数据)")
 
