@@ -42,7 +42,8 @@ class SFTDataset(Dataset):
                  prompt_key='prompt',
                  response_key='response',
                  max_length=1024,
-                 truncation='error'):
+                 truncation='error',
+                 system_prompt_key=None):
         assert truncation in ['error', 'left', 'right']
         self.truncation = truncation
 
@@ -57,6 +58,7 @@ class SFTDataset(Dataset):
 
         self.prompt_key = prompt_key
         self.response_key = response_key
+        self.system_prompt_key = system_prompt_key
 
         self.max_length = max_length
 
@@ -76,6 +78,10 @@ class SFTDataset(Dataset):
         self.dataframe = pd.concat(dataframes)
         self.prompts = self.dataframe[self.prompt_key].tolist()
         self.responses = self.dataframe[self.response_key].tolist()
+        if self.system_prompt_key is not None:
+            self.system_prompts = self.dataframe[self.system_prompt_key].tolist()
+        else:
+            self.system_prompts = None
 
     def __len__(self):
         return len(self.prompts)
@@ -85,9 +91,12 @@ class SFTDataset(Dataset):
 
         prompt = self.prompts[item]
         response = self.responses[item]
+        system_prompt = None
+        if self.system_prompts:
+            system_prompt = self.system_prompts[item]
 
         # apply chat template
-        prompt_chat = [{'role': 'user', 'content': prompt}]
+        prompt_chat = [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': prompt}] if system_prompt else [{'role': 'user', 'content': prompt}]
 
         # string
         prompt_chat_str = tokenizer.apply_chat_template(prompt_chat, add_generation_prompt=True, tokenize=False)

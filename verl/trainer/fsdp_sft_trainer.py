@@ -97,13 +97,15 @@ class FSDPSFTTrainer(object):
                                         prompt_key=config.data.prompt_key,
                                         response_key=config.data.response_key,
                                         max_length=config.data.max_length,
-                                        truncation=config.data.truncation)
+                                        truncation=config.data.truncation,
+                                        system_prompt_key=getattr(config.data, 'system_prompt_key', None))
         self.val_dataset = SFTDataset(parquet_files=config.data.val_files,
                                       tokenizer=self.tokenizer,
                                       prompt_key=config.data.prompt_key,
                                       response_key=config.data.response_key,
                                       max_length=config.data.max_length,
-                                      truncation=config.data.truncation)
+                                      truncation=config.data.truncation,
+                                      system_prompt_key=getattr(config.data, 'system_prompt_key', None))
 
         # build dataloader
         rank = self.device_mesh.get_rank()

@@ -1,1 +1,48 @@
-torchrun --nproc_per_node=4 verl/trainer/fsdp_sft_trainer.py
+#!/bin/bash
+# SFT训练脚本
+
+set -e
+
+# 配置
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+export TOKENIZERS_PARALLELISM=true
+export NCCL_DEBUG=WARN
+export VLLM_ATTENTION_BACKEND=XFORMERS
+
+# 数据路径
+DATA_DIR="${DATA_DIR:-~/data/api_sft_data}"
+TRAIN_FILE="${TRAIN_FILE:-$DATA_DIR/Sports.parquet}"
+VAL_FILE="${VAL_FILE:-$DATA_DIR/Sports.parquet}"
+SYSTEM_PROMPT_KEY="${SYSTEM_PROMPT_KEY:-null}"
+
+# 模型路径
+MODEL_PATH="${MODEL_PATH:-Qwen/Qwen2.5-7B}"
+
+# 训练配置
+CONFIG_FILE="${CONFIG_FILE:-verl/trainer/config/sft_trainer.yaml}"
+EXPERIMENT_NAME="${EXPERIMENT_NAME:-sports_$(date +%Y%m%d_%H%M%S)}"
+WANDB_PROJECT="${WANDB_PROJECT:-Search-R1-sft}"
+TOTAL_EPOCHS="${TOTAL_EPOCHS:-3}"
+NUM_GPUS="${NUM_GPUS:-4}"
+LR="${LR:-1e-5}"
+BATCH_SIZE="${BATCH_SIZE:-64}"
+MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-4}"
+MAX_LENGTH="${MAX_LENGTH:-4096}"
+
+# 运行训练
+torchrun --nproc_per_node=4 verl/trainer/fsdp_sft_trainer.py \
+    data.train_files="$TRAIN_FILE" \
+    data.val_files="$VAL_FILE" \
+    data.prompt_key=prompt \
+    data.response_key=response \
+    data.system_prompt_key="$SYSTEM_PROMPT_KEY" \
+    data.max_length="$MAX_LENGTH" \
+    data.batch_size="$BATCH_SIZE" \
+    data.micro_batch_size="$MICRO_BATCH_SIZE" \
+    train.lr="$LR" \
+    trainer.experiment_name="$EXPERIMENT_NAME" \
+    trainer.project_name="$WANDB_PROJECT" \
+    trainer.n_gpus_per_node="$NUM_GPUS" \
+    trainer.total_epochs="$TOTAL_EPOCHS" \
+    trainer.default_local_dir="checkpoints/$EXPERIMENT_NAME" \
+    "$@"
