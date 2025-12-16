@@ -91,6 +91,8 @@ class FSDPSFTTrainer(object):
 
     def _build_dataloader(self):
         config = self.config
+        system_prompt_key = config.data.system_prompt_key if hasattr(config.data, 'system_prompt_key') and config.data.system_prompt_key != 'null' else None
+
         # build dataset
         self.train_dataset = SFTDataset(parquet_files=config.data.train_files,
                                         tokenizer=self.tokenizer,
@@ -98,14 +100,14 @@ class FSDPSFTTrainer(object):
                                         response_key=config.data.response_key,
                                         max_length=config.data.max_length,
                                         truncation=config.data.truncation,
-                                        system_prompt_key=getattr(config.data, 'system_prompt_key', None))
+                                        system_prompt_key=system_prompt_key)
         self.val_dataset = SFTDataset(parquet_files=config.data.val_files,
                                       tokenizer=self.tokenizer,
                                       prompt_key=config.data.prompt_key,
                                       response_key=config.data.response_key,
                                       max_length=config.data.max_length,
                                       truncation=config.data.truncation,
-                                      system_prompt_key=getattr(config.data, 'system_prompt_key', None))
+                                      system_prompt_key=system_prompt_key)
 
         # build dataloader
         rank = self.device_mesh.get_rank()
