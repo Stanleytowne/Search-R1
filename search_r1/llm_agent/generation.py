@@ -78,6 +78,26 @@ class LLMGenerationManager:
         # Format: {sample_idx: 'give_answer' | 'give_up' | None}
         self.finish_call_history = {}
 
+        # =========================================================================
+        # [网络优化] 初始化持久化 HTTP 客户端
+        # max_keepalive_connections: 保持的长连接数
+        # max_connections: 最大并发数，防止把服务器打挂
+        # =========================================================================
+        limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
+        timeout = httpx.Timeout(30.0, connect=10.0) # connect 超时设短一点，fail fast
+        self.async_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+
+    def __del__(self):
+        """析构函数：确保关闭网络连接"""
+        try:
+            # 关闭同步 session
+            self.sync_session.close()
+            # 关闭异步 client (需要 event loop，这里尽力尝试)
+            if hasattr(self, 'async_client') and not self.async_client.is_closed:
+                asyncio.run(self.async_client.aclose())
+        except Exception:
+            pass
+
     def _batch_tokenize(self, responses: List[str]) -> torch.Tensor:
         """Tokenize a batch of responses."""
         return self.tokenizer(
@@ -898,6 +918,11 @@ If I want to give the final answer, I should put the answer between <answer> and
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
         
+        # If loop is closed or unusable, create a new one
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         return loop.run_until_complete(self._batch_call_toolbench_apis_async(api_calls))
     
     async def _batch_call_toolbench_apis_async(self, api_calls: List[Dict]) -> Dict[int, Dict]:
@@ -933,27 +958,18 @@ If I want to give the final answer, I should put the answer between <answer> and
                 # Split on '_for_' - the last part is the tool_name
                 parts = action_name.rsplit('_for_', 1)
                 if len(parts) == 2:
-                    api_name = parts[0]
                     tool_name = parts[1]
                 else:
-                    # Fallback: split on first occurrence
                     parts = action_name.split('_for_', 1)
-                    api_name = parts[0]
                     tool_name = parts[1] if len(parts) > 1 else 'unknown'
             else:
-                # No '_for_' in name, use the whole name as api_name
-                api_name = action_name
                 tool_name = 'unknown'
             
             # Extract category from sample's extra_info
             # Map original_index to category
             original_idx = api_call.get('original_index', idx)
             if not hasattr(self, 'sample_categories') or original_idx not in self.sample_categories:
-                results[idx] = {
-                    'error': f'Missing category for sample {original_idx}. Category must be provided in extra_info.',
-                    'response': ''
-                }
-                continue
+                raise ValueError(f'Missing category for sample {original_idx}.')
             
             category = self.sample_categories[original_idx]
             
@@ -964,7 +980,6 @@ If I want to give the final answer, I should put the answer between <answer> and
                     'error': validation_error,
                     'response': ''
                 }
-                print(f"[DEBUG] API call validation failed for action: {action_name} (tool: {tool_name}, category: {category}): {validation_error}\n")
                 continue
             
             # Prepare payload
@@ -979,7 +994,6 @@ If I want to give the final answer, I should put the answer between <answer> and
             
             # Create async task for this API call
             task = self._call_toolbench_api_async(
-                idx=idx,
                 url=f"{self.config.toolbench_url}/virtual",
                 payload=payload,
                 action_name=action_name,
@@ -992,16 +1006,16 @@ If I want to give the final answer, I should put the answer between <answer> and
         
         # Execute all API calls concurrently
         if async_tasks:
+            # return_exceptions=True 确保一个请求崩了不会导致整个 batch 失败
             responses = await asyncio.gather(*async_tasks, return_exceptions=True)
             
-            # Process responses
             for idx, response in zip(task_indices, responses):
                 if isinstance(response, Exception):
                     results[idx] = {
-                        'error': f'API call error: {str(response)}',
+                        'error': f'API call internal error: {str(response)}',
                         'response': ''
                     }
-                    print(f"[DEBUG] API call exception: {str(response)}")
+                    print(f"[ERROR] API call exception: {str(response)}")
                 else:
                     results[idx] = response
         
@@ -1009,7 +1023,6 @@ If I want to give the final answer, I should put the answer between <answer> and
     
     async def _call_toolbench_api_async(
         self, 
-        idx: int, 
         url: str, 
         payload: Dict, 
         action_name: str,
@@ -1018,36 +1031,24 @@ If I want to give the final answer, I should put the answer between <answer> and
         action_input: Dict
     ) -> Dict:
         """
-        Async function to call a single ToolBench API.
-        
-        Args:
-            idx: Index of the API call
-            url: API endpoint URL
-            payload: Request payload
-            action_name: Name of the action
-            tool_name: Name of the tool
-            category: Category of the tool
-            action_input: Input parameters
-            
-        Returns:
-            API response dict
+        使用 self.async_client 发送请求，不再创建新连接。
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            try:
-                response = await client.post(url, json=payload)
-                
-                if response.status_code == 200:
-                    return response.json()
-                else:
-                    error_msg = f'API call failed with status {response.status_code}'
-                    print(f"[DEBUG] Calling ToolBench API {action_name} (tool: {tool_name}, category: {category}) with action input: {action_input} error with response status: {response.status_code}\n")
-                    return {
-                        'error': error_msg,
-                        'response': ''
-                    }
-            except Exception as e:
-                print(f"[DEBUG] API call exception for {action_name}: {str(e)}")
+        try:
+            # 直接使用初始化好的 client
+            response = await self.async_client.post(url, json=payload)
+            
+            if response.status_code == 200:
+                return response.json()
+            else:
+                # 只有出错时才 print，减少 I/O
+                # print(f"[DEBUG] Error {response.status_code} for {action_name}")
                 return {
-                    'error': f'API call error: {str(e)}',
+                    'error': f'API call failed with status {response.status_code}',
                     'response': ''
                 }
+        except Exception as e:
+            # print(f"[DEBUG] Exception for {action_name}: {str(e)}")
+            return {
+                'error': f'API call error: {str(e)}',
+                'response': ''
+            }
