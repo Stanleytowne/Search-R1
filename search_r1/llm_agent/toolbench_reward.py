@@ -166,7 +166,8 @@ class ToolBenchRewardManager:
         if valid_action_stats and len(valid_action_stats) > original_idx and turn_stats and len(turn_stats) > original_idx:
             return valid_action_stats[original_idx] / turn_stats[original_idx]
         else:
-            raise ValueError(f"turn_stats or valid_action_stats is not found for original_idx {original_idx}")
+            print(f"turn_stats or valid_action_stats is not found for original_idx {original_idx}")
+            return 0.0
     
     def _parse_api_calls(self, response_str: str) -> List[Dict[str, str]]:
         """
@@ -253,7 +254,8 @@ class ToolBenchRewardManager:
         if api_error_stats and len(api_error_stats) > original_idx and turn_stats and len(turn_stats) > original_idx:
             return 1 - api_error_stats[original_idx] / (turn_stats[original_idx] - 1)
         else:
-            raise ValueError(f"turn_stats or api_error_stats is not found for original_idx {original_idx}")
+            print(f"turn_stats or api_error_stats is not found for original_idx {original_idx}")
+            return 0.0
 
     def _parse_observations(self, response_str: str) -> List[Dict]:
         """
