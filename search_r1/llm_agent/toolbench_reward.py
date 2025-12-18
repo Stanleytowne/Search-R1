@@ -103,9 +103,16 @@ class ToolBenchRewardManager:
                 else:
                     print("[DEBUG REWARD] (empty)")
                 print("#" * 30)
-                print("[DEBUG REWARD] RESPONSE (valid tokens only, excluding observation):")
+                print("[DEBUG REWARD] RESPONSE:")
                 print("[DEBUG REWARD] " + response_str)
                 print("#" * 30)
+                print("[DEBUG REWARD] Trained response:")
+                info_mask = data_item.batch['info_mask']
+                info_mask = info_mask[prompt_length:]
+                trained = torch.where(info_mask, valid_response_ids, self.tokenizer.pad_token_id)
+                print(self.tokenizer.decode(trained, skip_special_tokens=True))
+                print("#" * 30)
+
             
             # 获取原始样本索引（处理batch repeat的情况）
             # 如果batch被repeat了，需要通过index找到原始样本
@@ -138,7 +145,6 @@ class ToolBenchRewardManager:
             
             # 将reward分配到最后一个有效response token
             # 注意：reward_tensor的形状是(batch_size, response_length)，
-            # 这里的response_length只包含模型生成的response tokens，不包含prompt和observation
             # observation tokens会被info_mask标记，在训练时被排除
             if valid_response_length > 0:
                 reward_tensor[i, valid_response_length - 1] = total_reward
