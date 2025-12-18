@@ -109,8 +109,8 @@ class ToolBenchRewardManager:
                 print("[DEBUG REWARD] Trained response:")
                 info_mask = data_item.batch['info_mask']
                 info_mask = info_mask[prompt_length:]
-                trained = torch.where(info_mask, valid_response_ids, self.tokenizer.pad_token_id)
-                print(self.tokenizer.decode(trained, skip_special_tokens=True))
+                trained = torch.where(info_mask.bool(), valid_response_ids, self.tokenizer.pad_token_id)
+                print(self.tokenizer.decode(trained, skip_special_tokens=False))
                 print("#" * 30)
 
             
