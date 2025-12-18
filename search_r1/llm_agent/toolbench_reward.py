@@ -107,9 +107,6 @@ class ToolBenchRewardManager:
                 print("[DEBUG REWARD] " + response_str)
                 print("#" * 30)
             
-            # 移除</s> token（如果存在）
-            # response_str = response_str.replace('</s>', '').strip()
-            
             # 获取原始样本索引（处理batch repeat的情况）
             # 如果batch被repeat了，需要通过index找到原始样本
             original_idx = i
@@ -120,23 +117,16 @@ class ToolBenchRewardManager:
                     original_idx = int(data.non_tensor_batch['index'][i])
             
             # 1. 格式奖励：检查是否包含正确的格式
-            format_reward = self._compute_format_reward(response_str, valid_response_length)
+            format_reward = self._compute_format_reward(original_idx, meta_info)
             
             # 2. Function call奖励：从response_str中解析Observation获取API调用结果
             function_call_reward = self._compute_function_call_reward(
-                response_str, valid_response_length
+                original_idx, meta_info
             )
-            
-            # 调试输出
-            if i == 0:
-                observations = self._parse_observations(response_str)
-                print(f"[DEBUG Reward] Sample {i} (original_idx={original_idx})")
-                print(f"  Parsed {len(observations)} observations from response_str")
-                print(f"  function_call_reward: {function_call_reward}")
             
             # 3. Finish调用奖励：检查最后一次是否调用了Finish
             finish_reward = self._compute_finish_reward(
-                response_str, original_idx, meta_info, valid_response_length
+                original_idx, meta_info
             )
             
             # 组合reward
@@ -164,29 +154,13 @@ class ToolBenchRewardManager:
         
         return reward_tensor
     
-    def _compute_format_reward(self, response_str: str, response_length: int) -> float:
-        """
-        计算格式奖励
-        检查是否包含Thought/Action/Action Input格式
-        关键：需要对每次API调用（每次Thought/Action/Action Input组合）取平均，
-        防止模型通过重复调用API来获得高奖励
-        """
-        # 解析出所有API调用（每次Thought/Action/Action Input组合）
-        api_calls = self._parse_api_calls(response_str)
-        
-        if not api_calls:
-            # 没有找到任何API调用格式
-            return 0.0
-        
-        # 对每次API调用计算格式奖励，然后取平均
-        format_scores = []
-        for api_call in api_calls:
-            score = self._evaluate_single_api_call_format(api_call)
-            format_scores.append(score)
-        
-        # 取平均值，防止重复调用API获得高奖励
-        avg_score = sum(format_scores) / len(format_scores) if format_scores else 0.0
-        return avg_score
+    def _compute_format_reward(self, original_idx: int, meta_info: Dict) -> float:
+        turn_stats = meta_info.get('turn_stats', [])
+        valid_action_stats = meta_info.get('valid_action_stats', [])
+        if valid_action_stats and len(valid_action_stats) > original_idx and turn_stats and len(turn_stats) > original_idx:
+            return valid_action_stats[original_idx] / turn_stats[original_idx]
+        else:
+            raise ValueError(f"turn_stats or valid_action_stats is not found for original_idx {original_idx}")
     
     def _parse_api_calls(self, response_str: str) -> List[Dict[str, str]]:
         """
@@ -267,31 +241,13 @@ class ToolBenchRewardManager:
         # 部分格式奖励（有基本格式但JSON可能不完整）
         return 0.5
     
-    def _compute_function_call_reward(self, response_str: str, response_length: int) -> float:
-        """
-        计算Function call奖励
-        如果API调用结果有error，则惩罚
-        
-        直接从response_str中解析Observation来获取error信息
-        Observation格式: "Observation: {"error": "...", "response": "..."}"
-        """
-        # 从response_str中解析所有Observation
-        observations = self._parse_observations(response_str)
-        
-        # 计算奖励：每个成功的API调用给奖励，每个错误给惩罚
-        reward = 0.0
-        
-        if observations:
-            for obs_json in observations:
-                has_error = bool(obs_json.get('error', '').strip())
-                if not has_error:  # 如果有error
-                    reward += 1
-            
-            return reward / len(observations)
+    def _compute_function_call_reward(self, original_idx: int, meta_info: Dict) -> float:
+        turn_stats = meta_info.get('turn_stats', [])
+        api_error_stats = meta_info.get('api_error_stats', [])
+        if api_error_stats and len(api_error_stats) > original_idx and turn_stats and len(turn_stats) > original_idx:
+            return 1 - api_error_stats[original_idx] / (turn_stats[original_idx] - 1)
         else:
-            # 如果没有API调用或Observation，可能是格式错误或没有调用API
-            # 不给奖励也不给惩罚（中性）
-            return 0.0
+            raise ValueError(f"turn_stats or api_error_stats is not found for original_idx {original_idx}")
 
     def _parse_observations(self, response_str: str) -> List[Dict]:
         """
@@ -341,7 +297,7 @@ class ToolBenchRewardManager:
         
         return observations
     
-    def _compute_finish_reward(self, response_str: str, sample_idx: int, meta_info: Dict, response_length: int) -> float:
+    def _compute_finish_reward(self, original_idx: int, meta_info: Dict) -> float:
         """
         计算Finish调用奖励
         检查最后一次是否调用了Finish函数
@@ -353,10 +309,10 @@ class ToolBenchRewardManager:
         # 优先从meta_info中获取（更可靠）
         # meta_info中的finish_called只在execute_predictions中检测到Finish时才会设置
         finish_called = meta_info.get('finish_called', {})
-        if sample_idx in finish_called and finish_called[sample_idx] is not None:
+        if original_idx in finish_called and finish_called[original_idx] is not None:
             # 只有在meta_info中记录了Finish调用，才给予奖励
             # 这确保了只有在execute_predictions中真正检测到Finish时才给奖励
-            return_type = finish_called[sample_idx]
+            return_type = finish_called[original_idx]
             if return_type == 'give_answer':
                 return 1
             elif return_type == 'give_up':
@@ -364,11 +320,14 @@ class ToolBenchRewardManager:
             else:
                 return 0.3  # Finish存在但格式可能不对
         
-        # 如果meta_info中没有Finish记录，即使response_str中有Finish，也不给奖励
-        # 因为可能是中间步骤的response，还没有真正执行Finish
-        # 这样可以避免在中间步骤错误地给予Finish奖励
-        
         return 0.0
+
+    def _compute_pass_reward(self, response_str: str, sample_idx: int, meta_info: Dict, response_length: int) -> float:
+        # TODO: implement pass rate reward
+        finish_called = meta_info.get('finish_called', {})
+
+        if sample_idx not in finish_called or finish_called[sample_idx] is None or finish_called[sample_idx] == 'give_up':
+            return 0.0
 
 
 def create_toolbench_reward_manager(

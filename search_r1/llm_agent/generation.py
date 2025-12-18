@@ -69,9 +69,6 @@ class LLMGenerationManager:
             max_start_length=config.max_start_length
         ))
         
-        # Cache for API information extracted from prompts
-        self.api_info_cache = {}
-        
         # Track API calls and Finish calls for reward computation
         # Format: {sample_idx: [list of (error, success)]}
         self.api_call_history = {}
@@ -114,62 +111,47 @@ class LLMGenerationManager:
             skip_special_tokens=True
         )
 
-        if self.config.use_toolbench:
-            # For ToolBench format, stop at Action Input (complete JSON) or end of response
-            # Format: Thought: ...\nAction: ...\nAction Input: {...}
-            processed_responses = []
-            for resp in responses_str:
-                # Remove eos_token if present at the end of the sequence
-                eos_token = self.tokenizer.eos_token if hasattr(self.tokenizer, 'eos_token') and self.tokenizer.eos_token is not None else '</s>'
-                resp = resp.rstrip()
-                if resp.endswith(eos_token):
-                    resp = resp[:-len(eos_token)].rstrip()
-                
-                # Check if there's a complete Action Input (function call)
-                # Look for "Action Input:" followed by JSON object
-                action_input_start = resp.find('Action Input:')
-                if action_input_start != -1:
-                    # Find the JSON object after "Action Input:"
-                    json_start = resp.find('{', action_input_start)
-                    if json_start != -1:
-                        # Try to find the matching closing brace
-                        brace_count = 0
-                        json_end = json_start
-                        for i in range(json_start, len(resp)):
-                            if resp[i] == '{':
-                                brace_count += 1
-                            elif resp[i] == '}':
-                                brace_count -= 1
-                                if brace_count == 0:
-                                    json_end = i + 1
-                                    break
-                        if brace_count == 0:
-                            # Found complete JSON, extract up to here (including the closing brace)
-                            processed_responses.append(resp[:json_end])
-                        else:
-                            # Incomplete JSON, keep original (but remove </s>)
-                            processed_responses.append(resp)
+        # For ToolBench format, stop at Action Input (complete JSON) or end of response
+        # Format: Thought: ...\nAction: ...\nAction Input: {...}
+        processed_responses = []
+        for resp in responses_str:
+            # Remove eos_token if present at the end of the sequence
+            eos_token = self.tokenizer.eos_token if hasattr(self.tokenizer, 'eos_token') and self.tokenizer.eos_token is not None else '</s>'
+            resp = resp.rstrip()
+            if resp.endswith(eos_token):
+                resp = resp[:-len(eos_token)].rstrip()
+            
+            # Check if there's a complete Action Input (function call)
+            # Look for "Action Input:" followed by JSON object
+            action_input_start = resp.find('Action Input:')
+            if action_input_start != -1:
+                # Find the JSON object after "Action Input:"
+                json_start = resp.find('{', action_input_start)
+                if json_start != -1:
+                    # Try to find the matching closing brace
+                    brace_count = 0
+                    json_end = json_start
+                    for i in range(json_start, len(resp)):
+                        if resp[i] == '{':
+                            brace_count += 1
+                        elif resp[i] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_end = i + 1
+                                break
+                    if brace_count == 0:
+                        # Found complete JSON, extract up to here (including the closing brace)
+                        processed_responses.append(resp[:json_end])
                     else:
+                        # Incomplete JSON, keep original (but remove </s>)
                         processed_responses.append(resp)
                 else:
-                    # No Action Input found, keep original response (but remove </s>)
                     processed_responses.append(resp)
-            responses_str = processed_responses
-        else:
-            # Original Search-R1 format
-            responses_str = [resp.split('</search>')[0] + '</search>'
-                     if '</search>' in resp 
-                     else resp.split('</answer>')[0] + '</answer>'
-                     if '</answer>' in resp 
-                     else resp
-                     for resp in responses_str]
-
-        if self.config.no_think_rl:
-            raise ValueError('stop')
-            # if no_think_rl is enabled, only keep action in the str
-            actions, _ = self.env.postprocess_predictions(responses_str)
-            responses_str=[f"<answer>{envs[idx].ACTION_LOOKUP[action]}</answer>" for idx, action in enumerate(actions)]
-            print("RESPONSES:", responses_str)
+            else:
+                # No Action Input found, keep original response (but remove </s>)
+                processed_responses.append(resp)
+        responses_str = processed_responses
+        
         responses = self._batch_tokenize(responses_str)
         return responses, responses_str
 
@@ -318,73 +300,66 @@ class LLMGenerationManager:
 
     def run_llm_loop(self, gen_batch, initial_input_ids: torch.Tensor) -> Tuple[Dict, Dict]:
         """Run main LLM generation loop."""
-
-        # INSERT_YOUR_CODE
-        # 打印第一条数据的input
-        if gen_batch.batch['input_ids'].shape[0] > 0:
-            first_input_ids = gen_batch.batch['input_ids'][0]
-            input_text = self.tokenizer.decode(first_input_ids, skip_special_tokens=True)
-            print("[DEBUG] First sample input:")
-            print(input_text)
         
         original_left_side = {'input_ids': initial_input_ids[:, -self.config.max_start_length:]}
         original_right_side = {'responses': initial_input_ids[:, []], 'responses_with_info_mask': initial_input_ids[:, []]}
         
-        active_mask = torch.ones(gen_batch.batch['input_ids'].shape[0], dtype=torch.bool)
-        turns_stats = torch.ones(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
-        valid_action_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
-        valid_search_stats = torch.zeros(gen_batch.batch['input_ids'].shape[0], dtype=torch.int)
+        batch_size = gen_batch.batch['input_ids'].shape[0]
+
+        active_mask = torch.ones(batch_size, dtype=torch.bool)
+        turns_stats = torch.ones(batch_size, dtype=torch.int)
+        valid_action_stats = torch.zeros(batch_size, dtype=torch.int)
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
-        if self.config.use_toolbench:
-            batch_size = gen_batch.batch['input_ids'].shape[0]
-            self.api_call_history = {i: [] for i in range(batch_size)}
-            self.finish_call_history = {i: None for i in range(batch_size)}
-            # Extract category and API list from extra_info for each sample
-            self.sample_categories = {}
-            self.sample_api_lists = {}  # Store API validation info for each sample
+        # 1. Initialize ToolBench related variables: api_name, category, etc.
+        
+        self.api_call_history = {i: [] for i in range(batch_size)}
+        self.finish_call_history = {i: None for i in range(batch_size)}
+        # Extract category and API list from extra_info for each sample
+        self.sample_categories = {}
+        self.sample_api_lists = {}  # Store API validation info for each sample
+        
+        # Get extra_info from non_tensor_batch or meta_info
+        extra_info = None
+        if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
+            extra_info = gen_batch.non_tensor_batch['extra_info']
+        elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
+            extra_info = gen_batch.meta_info['extra_info']
+        else:
+            raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
+        
+        if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
+            raise ValueError(f"Invalid extra_info: expected list/tuple/array of length {batch_size}, got {type(extra_info)} with length {len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
+        
+        # Extract category and API info for each sample
+        for i, info in enumerate(extra_info):
             
-            # Get extra_info from non_tensor_batch or meta_info
-            extra_info = None
-            if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
-                extra_info = gen_batch.non_tensor_batch['extra_info']
-            elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
-                extra_info = gen_batch.meta_info['extra_info']
-            else:
-                raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
+            self.sample_categories[i] = info['category']
             
-            if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
-                raise ValueError(f"Invalid extra_info: expected list/tuple/array of length {batch_size}, got {type(extra_info)} with length {len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
+            # Extract API validation info (simplified format: api, n_required_param, n_optional_param)
+            # Parse comma-separated API names and counts
+            api_names = [name.strip() for name in info['api'].split(',') if name.strip()]
+            n_required_str = info.get('n_required_param', '')
+            n_optional_str = info.get('n_optional_param', '')
             
-            # Extract category and API info for each sample
-            for i, info in enumerate(extra_info):
-                
-                self.sample_categories[i] = info['category']
-                
-                # Extract API validation info (simplified format: api, n_required_param, n_optional_param)
-                # Parse comma-separated API names and counts
-                api_names = [name.strip() for name in info['api'].split(',') if name.strip()]
-                n_required_str = info.get('n_required_param', '')
-                n_optional_str = info.get('n_optional_param', '')
-                
-                # Parse comma-separated counts
-                n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
-                n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
-                
-                # Build API validation dict (normalize API names)
-                api_validation_info = {}
-                for idx_api, api_name in enumerate(api_names):
-                    normalized_name = normalize_api_name(api_name)
-                    required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
-                    optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
-                    api_validation_info[normalized_name] = {
-                        'required_count': required_count,
-                        'optional_count': optional_count
-                    }
-                self.sample_api_lists[i] = api_validation_info
+            # Parse comma-separated counts
+            n_required_list = [int(x.strip()) for x in n_required_str.split(',') if x.strip()] if n_required_str else []
+            n_optional_list = [int(x.strip()) for x in n_optional_str.split(',') if x.strip()] if n_optional_str else []
+            
+            # Build API validation dict (normalize API names)
+            api_validation_info = {}
+            for idx_api, api_name in enumerate(api_names):
+                normalized_name = normalize_api_name(api_name)
+                required_count = n_required_list[idx_api] if idx_api < len(n_required_list) else 0
+                optional_count = n_optional_list[idx_api] if idx_api < len(n_optional_list) else 0
+                api_validation_info[normalized_name] = {
+                    'required_count': required_count,
+                    'optional_count': optional_count
+                }
+            self.sample_api_lists[i] = api_validation_info
 
-        # Main generation loop
+        # 2. Main generation loop
         for step in range(self.config.max_turns):
             if not active_mask.sum():
                 break
@@ -406,7 +381,7 @@ class LLMGenerationManager:
             # Execute in environment and process observations
             # Map active indices back to original batch indices for API call tracking
             active_indices = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
-            next_obs, dones, valid_action, is_search = self.execute_predictions(
+            next_obs, dones, valid_action = self.execute_predictions(
                 responses_str, self.tokenizer.pad_token, active_mask, original_indices=active_indices
             )
             
@@ -415,7 +390,6 @@ class LLMGenerationManager:
             active_num_list.append(active_mask.sum().item())
             turns_stats[curr_active_mask] += 1
             valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
-            valid_search_stats += torch.tensor(is_search, dtype=torch.int)
 
             next_obs_ids = self._process_next_obs(next_obs)
             
@@ -451,7 +425,7 @@ class LLMGenerationManager:
             # # Execute in environment and process observations
             # Map active indices back to original batch indices
             active_indices_final = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
-            _, dones, valid_action, is_search = self.execute_predictions(
+            _, dones, valid_action = self.execute_predictions(
                 responses_str, self.tokenizer.pad_token, active_mask, do_search=False, original_indices=active_indices_final
             )
 
@@ -459,7 +433,6 @@ class LLMGenerationManager:
             active_mask = active_mask * curr_active_mask
             active_num_list.append(active_mask.sum().item())
             valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
-            valid_search_stats += torch.tensor(is_search, dtype=torch.int)
             
 
             original_right_side = self._update_right_side(
@@ -470,18 +443,13 @@ class LLMGenerationManager:
         meta_info['turns_stats'] = turns_stats.tolist()
         meta_info['active_mask'] = active_mask.tolist()
         meta_info['valid_action_stats'] = valid_action_stats.tolist()
-        meta_info['valid_search_stats'] = valid_search_stats.tolist()
         
         # Add ToolBench reward computation info
-        if self.config.use_toolbench:
-            print(f"[DEBUG run_llm_loop] Finalizing: api_call_history has {len(self.api_call_history)} entries")
-            print(f"[DEBUG run_llm_loop] api_call_history keys: {list(self.api_call_history.keys())[:10]}...")  # Show first 10
-            meta_info['api_errors'] = {
-                i: [error for error in errors] 
-                for i, errors in self.api_call_history.items()
-            }
-            meta_info['finish_called'] = self.finish_call_history.copy()
-            print(f"[DEBUG run_llm_loop] Added to meta_info: api_errors has {len(meta_info['api_errors'])} entries")
+        meta_info['api_error_stats'] = {
+            i: sum(errors) 
+            for i, errors in self.api_call_history.items()
+        }
+        meta_info['finish_called'] = self.finish_call_history.copy()
         
         print("ACTIVE_TRAJ_NUM:", active_num_list)
         
@@ -568,6 +536,9 @@ class LLMGenerationManager:
             else:
                 print("(No response generated)")
             print("\n" + "=" * 100 + "\n")
+            print(f"[DEBUG] api_call_history: {self.api_call_history[sample_idx]}")
+            print(f"[DEBUG] finish_call_history: {self.finish_call_history[sample_idx]}")
+            print("\n" + "=" * 100 + "\n")
         except Exception as e:
             print(f"[DEBUG] Error printing full conversation: {e}")
             import traceback
@@ -587,10 +558,12 @@ class LLMGenerationManager:
             original_indices: List of original batch indices (for mapping active batch indices back to original)
             
         Returns:
-            Tuple of (next_obs, dones, valid_action, is_search)
+            Tuple of (next_obs, dones, valid_action)
         """
+        assert len(predictions) == active_mask.shape[0], f"predictions length {len(predictions)} != active_mask length {active_mask.shape[0]}"
+
         cur_actions, contents = self.postprocess_predictions(predictions)
-        next_obs, dones, valid_action, is_search = [], [], [], []
+        next_obs, dones, valid_action = [], [], []
         
         # Handle None active_mask
         if active_mask is None:
@@ -601,133 +574,85 @@ class LLMGenerationManager:
         # Map active batch indices to original batch indices
         if original_indices is None:
             original_indices = list(range(len(predictions)))
+            
+        api_calls = []
+        api_indices = []
+        for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
+            if action and action != 'Finish' and active_mask[i]:
+                original_idx = original_indices[i] if i < len(original_indices) else i
+                api_calls.append({
+                    'index': i,  # Active batch index (for api_results mapping)
+                    'original_index': original_idx,  # Original batch index (for api_call_history)
+                    'action': action,
+                    'content': content_dict
+                })
+                api_indices.append(i)
         
-        if self.config.use_toolbench:
-            
-            api_calls = []
-            api_indices = []
-            for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
-                if action and action != 'Finish' and active_mask[i]:
+        # Batch API calls
+        api_results = {}
+        if api_calls:
+            api_results = self.batch_call_toolbench_apis(api_calls)
+        elif not api_calls:
+            print(f"[DEBUG] No API calls to make (api_calls is empty)")
+        
+        # Process results
+        api_result_idx = 0
+        for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
+            if not active:
+                next_obs.append('')
+                dones.append(1)
+                valid_action.append(0)
+            elif action == 'Finish':
+                # Check if it's give_answer or give_up
+                if isinstance(content_dict, dict) and 'action_input' in content_dict:
+                    return_type = content_dict['action_input'].get('return_type', 'give_answer')
+                    # Track Finish call for reward computation
+                    # Use original batch index
                     original_idx = original_indices[i] if i < len(original_indices) else i
-                    api_calls.append({
-                        'index': i,  # Active batch index (for api_results mapping)
-                        'original_index': original_idx,  # Original batch index (for api_call_history)
-                        'action': action,
-                        'content': content_dict
-                    })
-                    api_indices.append(i)
-            
-            # Batch API calls
-            api_results = {}
-            if api_calls:
-                api_results = self.batch_call_toolbench_apis(api_calls)
-            elif not api_calls:
-                print(f"[DEBUG] No API calls to make (api_calls is empty)")
-            
-            # Process results
-            api_result_idx = 0
-            for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
-                if not active:
+                    self.finish_call_history[original_idx] = return_type
                     next_obs.append('')
                     dones.append(1)
-                    valid_action.append(0)
-                    is_search.append(0)
-                elif action == 'Finish':
-                    # Check if it's give_answer or give_up
-                    if isinstance(content_dict, dict) and 'action_input' in content_dict:
-                        return_type = content_dict['action_input'].get('return_type', 'give_answer')
-                        # Track Finish call for reward computation
-                        # Use original batch index
-                        original_idx = original_indices[i] if i < len(original_indices) else i
-                        if original_idx in self.finish_call_history:
-                            self.finish_call_history[original_idx] = return_type
-                        else:
-                            self.finish_call_history[original_idx] = return_type
-                        next_obs.append('')
-                        dones.append(1)
-                        valid_action.append(1)
-                        is_search.append(0)
-                    else:
-                        next_obs.append('')
-                        dones.append(1)
-                        valid_action.append(1)
-                        is_search.append(0)
-                elif action and i in api_results:
-                    # API call succeeded
-                    result = api_results[i]
-                    error = result.get('error', '')
-                    response = result.get('response', '')
-                    
-                    # Track API call result for reward computation
-                    # Use original batch index for api_call_history
-                    original_idx = original_indices[i] if i < len(original_indices) else i
-                    has_error = bool(error and error.strip())
-                    if original_idx in self.api_call_history:
-                        self.api_call_history[original_idx].append(has_error)
-                    else:
-                        # Initialize if not exists
-                        self.api_call_history[original_idx] = [has_error]
-                    
-                    # Format as function response (matching StableToolBench format)
-                    # In StableToolBench, function response format is: "Observation: {json_string}\n"
-                    # The JSON string format is: {"error": "", "response": "..."}
-                    function_response_json = json.dumps({"error": error, "response": response}, ensure_ascii=False)
-                    # Match StableToolBench format: "Observation: {content}\n" (as in tool_llama_model.py line 117)
-                    next_obs.append(f"\n\nObservation: {function_response_json}\n\n")
-                    dones.append(0)
                     valid_action.append(1)
-                    is_search.append(1)  # Treat API calls as search-like operations
-                elif action:
-                    # Invalid API call or parsing error
-                    next_obs.append('\n\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n\n')
-                    dones.append(0)
-                    valid_action.append(0)
-                    is_search.append(0)
                 else:
-                    # No action detected
-                    next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
-                    dones.append(0)
-                    valid_action.append(0)
-                    is_search.append(0)
-        else:
-            # Original Search-R1 mode
-            search_queries = [content.get('content', '') if isinstance(content, dict) else content 
-                            for action, content in zip(cur_actions, contents) if action == 'search']
-            if do_search:
-                search_results = self.batch_search(search_queries)
-                assert len(search_results) == sum([1 for action in cur_actions if action == 'search'])
-            else:
-                search_results = [''] * sum([1 for action in cur_actions if action == 'search'])
-
-            for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
-                if not active:
                     next_obs.append('')
                     dones.append(1)
-                    valid_action.append(0)
-                    is_search.append(0)
+                    valid_action.append(1)
+            elif action and i in api_results:
+                # API call succeeded
+                result = api_results[i]
+                error = result.get('error', '')
+                response = result.get('response', '')
+                
+                # Track API call result for reward computation
+                # Use original batch index for api_call_history
+                original_idx = original_indices[i] if i < len(original_indices) else i
+                has_error = bool(error and error.strip())
+                if original_idx in self.api_call_history:
+                    self.api_call_history[original_idx].append(has_error)
                 else:
-                    if action == 'answer':
-                        next_obs.append('')
-                        dones.append(1)
-                        valid_action.append(1)
-                        is_search.append(0)
-                    elif action == 'search':
-                        content = content_dict.get('content', '') if isinstance(content_dict, dict) else content_dict
-                        next_obs.append(f'\n\n<information>{search_results.pop(0).strip()}</information>\n\n')
-                        dones.append(0)
-                        valid_action.append(1)
-                        is_search.append(1)
-                    else:
-                        next_obs.append(f'\nMy previous action is invalid. \
-If I want to search, I should put the query between <search> and </search>. \
-If I want to give the final answer, I should put the answer between <answer> and </answer>. Let me try again.\n')
-                        dones.append(0)
-                        valid_action.append(0)
-                        is_search.append(0)
+                    # Initialize if not exists
+                    self.api_call_history[original_idx] = [has_error]
+                
+                # Format as function response (matching StableToolBench format)
+                # In StableToolBench, function response format is: "Observation: {json_string}\n"
+                # The JSON string format is: {"error": "", "response": "..."}
+                function_response_json = json.dumps({"error": error, "response": response}, ensure_ascii=False)
+                # Match StableToolBench format: "Observation: {content}\n" (as in tool_llama_model.py line 117)
+                next_obs.append(f"\n\nObservation: {function_response_json}\n\n")
+                dones.append(0)
+                valid_action.append(1)
+            elif action:
+                # Invalid API call or parsing error
+                next_obs.append('\n\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n\n')
+                dones.append(0)
+                valid_action.append(0)
+            else:
+                # No action detected
+                next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
+                dones.append(0)
+                valid_action.append(0)
             
-            assert len(search_results) == 0
-            
-        return next_obs, dones, valid_action, is_search
+        return next_obs, dones, valid_action
 
     def postprocess_predictions(self, predictions: List[Any]) -> Tuple[List[str], List[Dict]]:
         """
@@ -744,113 +669,65 @@ If I want to give the final answer, I should put the answer between <answer> and
                 
         for idx, prediction in enumerate(predictions):
             if isinstance(prediction, str): # for llm output
-                if self.config.use_toolbench:
-                    # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
-                    thought_start = prediction.find("Thought: ")
-                    action_start = prediction.find("\nAction: ")
-                    action_input_start = prediction.find("\nAction Input: ")
+                # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
+                thought_start = prediction.find("Thought: ")
+                action_start = prediction.find("\nAction: ")
+                action_input_start = prediction.find("\nAction Input: ")
+                
+                if thought_start != -1 and action_start != -1 and action_input_start != -1:
+                    action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
+                    # Normalize API name: convert to lowercase and replace spaces with underscores
+                    action_name = normalize_api_name(action_name_raw)
+                    action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
                     
-                    if thought_start != -1 and action_start != -1 and action_input_start != -1:
-                        action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
-                        # Normalize API name: convert to lowercase and replace spaces with underscores
-                        action_name = normalize_api_name(action_name_raw)
-                        action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
-                        
-                        # Try to parse JSON - handle both single-line and multi-line JSON
-                        action_input = {}
-                        try:
-                            # First try direct JSON parsing
-                            action_input = json.loads(action_input_str)
-                        except json.JSONDecodeError:
-                            # If that fails, try to find the JSON object boundaries
-                            # Look for the first { and try to find matching }
-                            brace_start = action_input_str.find('{')
-                            if brace_start != -1:
-                                brace_count = 0
-                                brace_end = brace_start
-                                for i in range(brace_start, len(action_input_str)):
-                                    if action_input_str[i] == '{':
-                                        brace_count += 1
-                                    elif action_input_str[i] == '}':
-                                        brace_count -= 1
-                                        if brace_count == 0:
-                                            brace_end = i + 1
-                                            break
-                                if brace_count == 0:
-                                    try:
-                                        action_input = json.loads(action_input_str[brace_start:brace_end])
-                                    except json.JSONDecodeError:
-                                        # Last resort: try to extract key-value pairs
-                                        for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
-                                            action_input[match.group(1)] = match.group(2)
-                                        for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
-                                            action_input[match.group(1)] = int(match.group(2))
-                            else:
-                                # No JSON object found, try regex extraction
-                                for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
-                                    action_input[match.group(1)] = match.group(2)
-                                for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
-                                    action_input[match.group(1)] = int(match.group(2))
-                        
-                        actions.append(action_name)
-                        contents.append({
-                            'action_name': action_name,
-                            'action_input': action_input
-                        })
-                    else:
-                        actions.append(None)
-                        contents.append({})
+                    # Try to parse JSON - handle both single-line and multi-line JSON
+                    action_input = {}
+                    try:
+                        # First try direct JSON parsing
+                        action_input = json.loads(action_input_str)
+                    except json.JSONDecodeError:
+                        # If that fails, try to find the JSON object boundaries
+                        # Look for the first { and try to find matching }
+                        brace_start = action_input_str.find('{')
+                        if brace_start != -1:
+                            brace_count = 0
+                            brace_end = brace_start
+                            for i in range(brace_start, len(action_input_str)):
+                                if action_input_str[i] == '{':
+                                    brace_count += 1
+                                elif action_input_str[i] == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        brace_end = i + 1
+                                        break
+                            if brace_count == 0:
+                                try:
+                                    action_input = json.loads(action_input_str[brace_start:brace_end])
+                                except json.JSONDecodeError:
+                                    # Last resort: try to extract key-value pairs
+                                    for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                                        action_input[match.group(1)] = match.group(2)
+                                    for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                                        action_input[match.group(1)] = int(match.group(2))
+                        else:
+                            # No JSON object found, try regex extraction
+                            for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                                action_input[match.group(1)] = match.group(2)
+                            for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                                action_input[match.group(1)] = int(match.group(2))
+                    
+                    actions.append(action_name)
+                    contents.append({
+                        'action_name': action_name,
+                        'action_input': action_input
+                    })
                 else:
-                    # Original Search-R1 format
-                    pattern = r'<(search|answer)>(.*?)</\1>'
-                    match = re.search(pattern, prediction, re.DOTALL)
-                    if match:
-                        content = match.group(2).strip()  # Return only the content inside the tags
-                        action = match.group(1)
-                        actions.append(action)
-                        contents.append({'action': action, 'content': content})
-                    else:
-                        content = ''
-                        action = None
-                        actions.append(action)
-                        contents.append({})
+                    actions.append(None)
+                    contents.append({})
             else:
                 raise ValueError(f"Invalid prediction type: {type(prediction)}")
             
         return actions, contents
-
-    def batch_search(self, queries: List[str] = None) -> str:
-        """
-        Batchified search for queries.
-        Args:
-            queries: queries to call the search engine
-        Returns:
-            search results which is concatenated into a string
-        """
-        results = self._batch_search(queries)['result']
-        
-        return [self._passages2string(result) for result in results]
-
-    def _batch_search(self, queries):
-        
-        payload = {
-            "queries": queries,
-            "topk": self.config.topk,
-            "return_scores": True
-        }
-        
-        return requests.post(self.config.search_url, json=payload).json()
-
-    def _passages2string(self, retrieval_result):
-        format_reference = ''
-        for idx, doc_item in enumerate(retrieval_result):
-            
-            content = doc_item['document']['contents']
-            title = content.split("\n")[0]
-            text = "\n".join(content.split("\n")[1:])
-            format_reference += f"Doc {idx+1}(Title: {title}) {text}\n"
-
-        return format_reference
     
     def _validate_api_call(self, action_name: str, action_input: dict, sample_idx: int) -> Optional[str]:
         """
@@ -867,7 +744,7 @@ If I want to give the final answer, I should put the answer between <answer> and
         # Get API list for this sample
         if not hasattr(self, 'sample_api_lists') or sample_idx not in self.sample_api_lists:
             # If no API list, skip validation (backward compatibility)
-            return None
+            raise ValueError(f"Missing API list for sample {sample_idx}. Cannot proceed without API validation information.")
         
         # Ensure action_name is normalized
         action_name = normalize_api_name(action_name)
@@ -875,8 +752,7 @@ If I want to give the final answer, I should put the answer between <answer> and
         
         # Check if API name exists
         if action_name not in api_list:
-            available_apis = list(api_list.keys())
-            return f"Invalid API name: '{action_name}'."
+            return f"Invalid API name: '{action_name}'. Please check the API name."
         
         # Get API validation info (simplified format)
         api_info = api_list[action_name]
