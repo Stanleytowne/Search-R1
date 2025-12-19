@@ -14,6 +14,7 @@ import numpy as np
 import asyncio
 import httpx
 
+FINISH_PROMPT = "Thought: Since the tool call limit has been reached, I now need to summarize my thoughts and call 'Finish' to end the task."
 
 def normalize_api_name(api_name: str) -> str:
     """
@@ -155,9 +156,16 @@ class LLMGenerationManager:
         responses = self._batch_tokenize(responses_str)
         return responses, responses_str
 
-    def _process_next_obs(self, next_obs: List[str]) -> torch.Tensor:
+    def _process_next_obs(self, next_obs: List[str], last: bool = False, active_mask: torch.Tensor = None) -> torch.Tensor:
         """Process next observations from environment."""
-        
+        if last:
+            # for the last turn, we add the finish prompt to force the model to call 'Finish'
+            if active_mask is None:
+                active_mask = torch.ones(len(next_obs), dtype=torch.bool)
+            for i in range(len(next_obs)):
+                if active_mask[i]:
+                    next_obs[i] += FINISH_PROMPT
+
         next_obs_ids = self.tokenizer(
             next_obs, 
             padding='longest',
@@ -391,7 +399,7 @@ class LLMGenerationManager:
             turns_stats[curr_active_mask] += 1
             valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
 
-            next_obs_ids = self._process_next_obs(next_obs)
+            next_obs_ids = self._process_next_obs(next_obs, last=step==self.config.max_turns-1, active_mask=active_mask)
             
             # Update states
             rollings = self._update_rolling_state(
@@ -418,8 +426,13 @@ class LLMGenerationManager:
             })            
             gen_output = self._generate_with_gpu_padding(rollings_active)
 
-            meta_info = gen_output.meta_info            
+            meta_info = gen_output.meta_info
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
+
+            # add finish prompt to responses_str
+            # will not effect the responses_ids and rollings
+            responses_str = [FINISH_PROMPT + response for response in responses_str]
+            
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
             # # Execute in environment and process observations
@@ -560,8 +573,6 @@ class LLMGenerationManager:
         Returns:
             Tuple of (next_obs, dones, valid_action)
         """
-        assert len(predictions) == active_mask.shape[0], f"predictions length {len(predictions)} != active_mask length {active_mask.shape[0]}"
-
         cur_actions, contents = self.postprocess_predictions(predictions)
         next_obs, dones, valid_action = [], [], []
         
@@ -570,6 +581,8 @@ class LLMGenerationManager:
             active_mask = [True] * len(predictions)
         elif isinstance(active_mask, torch.Tensor):
             active_mask = active_mask.tolist()
+        
+        assert len(predictions) == len(active_mask), f"predictions length {len(predictions)} != active_mask length {len(active_mask)}"
         
         # Map active batch indices to original batch indices
         if original_indices is None:
