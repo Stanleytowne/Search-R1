@@ -109,8 +109,11 @@ class ToolBenchRewardManager:
                 else:
                     print("[DEBUG REWARD] (empty)")
                 print("#" * 30)
+                print("[DEBUG REWARD] Query:")
+                print(query_str)
+                print("#" * 30)
                 print("[DEBUG REWARD] RESPONSE:")
-                print("[DEBUG REWARD] " + response_str)
+                print(response_str)
                 print("#" * 30)
                 print("[DEBUG REWARD] Trained response:")
                 info_mask = data_item.batch['info_mask']

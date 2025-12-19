@@ -38,6 +38,14 @@ class JudgeResponse(BaseModel):
     scores: List[float]
 
 async def get_single_score(query: str, trajectory: str):
+    print("#" * 30)
+    print("[DEBUG REWARD] Query:")
+    print(query)
+    print("#" * 30)
+    print("[DEBUG REWARD] Trajectory:")
+    print(trajectory)
+    print("#" * 30)
+
     prompt = JUDGE_PROMPT.format(query=query, trajectory=trajectory)
     try:
         response = await client.chat.completions.create(
@@ -48,6 +56,10 @@ async def get_single_score(query: str, trajectory: str):
         )
         res_json = json.loads(response.choices[0].message.content)
         status = res_json.get("answer_status", "Unsolved")
+
+        print('#'*30)
+        print(res_json.get('reason', 'empty'))
+        print('#'*30)
         
         status_map = {
             "Solved": 1.0,
