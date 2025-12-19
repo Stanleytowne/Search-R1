@@ -180,13 +180,13 @@ class ToolBenchRewardManager:
     
     def _extract_query(self, full_prompt: str) -> str:
         import re
-        pattern = r'<|im_start|>user\n?(.*?)(?=<|im_end|>|$)'
+        # 修改：严格提取<|im_start|>user\n和<|im_end|>之间的内容
+        pattern = r'<\|im_start\|>user\n(.*?)<\|im_end\|>'
         matches = re.findall(pattern, full_prompt, re.DOTALL)
-        
         if matches:
+            # 如果有多个，取最后一个
             query = matches[-1].strip()
             return query
-        
         return full_prompt.strip()
 
     def _compute_format_reward(self, response_str: str, response_length: int) -> float:

@@ -135,7 +135,7 @@ def main_task(config):
             finish_reward_weight=finish_reward_weight,
             error_penalty=error_penalty,
             finish_bonus=finish_bonus,
-            num_examine=0,
+            num_examine=1,
             pass_reward_weight=pass_reward_weight,
             reward_server_url=reward_server_url
         )
