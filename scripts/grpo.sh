@@ -3,11 +3,6 @@
 
 set -e
 
-# 如果存在wandb_api.json则自动加载wandb API Key
-# 格式:
-# {
-#   "WANDB_API_KEY": "your-wandb-api-key-string"
-# }
 if [ -f "wandb_api.json" ]; then
     WANDB_API_KEY=$(python3 -c "
 import json
@@ -45,7 +40,7 @@ MODEL_PATH="${MODEL_PATH:-checkpoints/Sports/stage1/global_step_327}"
 
 # ToolBench服务器
 TOOLBENCH_URL="${TOOLBENCH_URL:-http://127.0.0.1:8080}"
-TOOLBENCH_KEY="${TOOLBENCH_KEY:-}"
+REWARD_SERVER_URL="${REWARD_SERVER_URL:-http://localhost:1234/evaluate_batch}"
 
 # 训练配置
 CONFIG_FILE="${CONFIG_FILE:-verl/trainer/config/grpo_toolbench_trainer.yaml}"
@@ -56,11 +51,10 @@ WANDB_PROJECT="${WANDB_PROJECT:-Search-R1}"
 FORMAT_REWARD_WEIGHT="${FORMAT_REWARD_WEIGHT:-1}"
 FUNCTION_CALL_REWARD_WEIGHT="${FUNCTION_CALL_REWARD_WEIGHT:-1}"
 FINISH_REWARD_WEIGHT="${FINISH_REWARD_WEIGHT:-1}"
-ERROR_PENALTY="${ERROR_PENALTY:--1}"
-FINISH_BONUS="${FINISH_BONUS:-1}"
+PASS_REWARD_WEIGHT="${PASS_REWARD_WEIGHT:-1}"
 
 # GRPO特定配置
-N_AGENT="${N_AGENT:-5}"  # 每个prompt生成的响应数
+N_AGENT="${N_AGENT:-4}"  # 每个prompt生成的响应数
 LEARNING_RATE="${LEARNING_RATE:-5e-7}"
 LR_WARMUP_RATIO="${LR_WARMUP_RATIO:-0.285}"
 EPOCHS="${EPOCHS:-10}"
@@ -91,13 +85,12 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     actor_rollout_ref.rollout.n_agent="$N_AGENT" \
     use_toolbench=true \
     toolbench_url="$TOOLBENCH_URL" \
-    toolbench_key="$TOOLBENCH_KEY" \
+    reward_model.reward_server_url="$REWARD_SERVER_URL" \
     algorithm.adv_estimator=grpo \
     reward_model.format_reward_weight="$FORMAT_REWARD_WEIGHT" \
     reward_model.function_call_reward_weight="$FUNCTION_CALL_REWARD_WEIGHT" \
     reward_model.finish_reward_weight="$FINISH_REWARD_WEIGHT" \
-    reward_model.error_penalty="$ERROR_PENALTY" \
-    reward_model.finish_bonus="$FINISH_BONUS" \
+    reward_model.pass_reward_weight="$PASS_REWARD_WEIGHT" \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \

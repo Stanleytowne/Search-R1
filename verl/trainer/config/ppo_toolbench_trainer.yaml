@@ -178,5 +178,4 @@ max_turns: 5
 do_search: false
 use_toolbench: true
 toolbench_url: "http://127.0.0.1:8000"
-toolbench_key: ""
 default_category: "G1_category"

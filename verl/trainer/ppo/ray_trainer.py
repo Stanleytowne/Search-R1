@@ -454,7 +454,6 @@ class RayPPOTrainer(object):
             topk = self.config.retriever.topk,
             use_toolbench=getattr(self.config, 'use_toolbench', False),
             toolbench_url=getattr(self.config, 'toolbench_url', None),
-            toolbench_key=getattr(self.config, 'toolbench_key', ''),
         )
 
         # Agent config preparation
@@ -694,7 +693,6 @@ class RayPPOTrainer(object):
             topk = self.config.retriever.topk,
             use_toolbench=getattr(self.config, 'use_toolbench', False),
             toolbench_url=getattr(self.config, 'toolbench_url', None),
-            toolbench_key=getattr(self.config, 'toolbench_key', ''),
         )
 
         generation_manager = LLMGenerationManager(

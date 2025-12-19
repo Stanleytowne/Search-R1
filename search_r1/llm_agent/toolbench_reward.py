@@ -24,8 +24,6 @@ class ToolBenchRewardManager:
         function_call_reward_weight: float = 0.2,
         finish_reward_weight: float = 0.3,
         pass_reward_weight: float = 0.1,
-        error_penalty: float = -0.5,
-        finish_bonus: float = 0.5,
         num_examine: int = 0,
         reward_server_url: str = "http://localhost:8000/evaluate_batch"
     ):
@@ -36,8 +34,6 @@ class ToolBenchRewardManager:
             function_call_reward_weight: Function call奖励权重
             finish_reward_weight: Finish调用奖励权重
             pass_reward_weight: Remote pass奖励权重
-            error_penalty: API调用错误的惩罚
-            finish_bonus: 正确调用Finish的奖励
             num_examine: 打印的样本数量
         """
         self.tokenizer = tokenizer
@@ -45,8 +41,6 @@ class ToolBenchRewardManager:
         self.function_call_reward_weight = function_call_reward_weight
         self.finish_reward_weight = finish_reward_weight
         self.pass_reward_weight = pass_reward_weight
-        self.error_penalty = error_penalty
-        self.finish_bonus = finish_bonus
         self.num_examine = num_examine
         self.reward_server_url = reward_server_url
     

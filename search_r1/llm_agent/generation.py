@@ -48,7 +48,6 @@ class GenerationConfig:
     # ToolBench related configs
     use_toolbench: bool = False
     toolbench_url: str = None
-    toolbench_key: str = ""
 
 class LLMGenerationManager:
     def __init__(
@@ -878,7 +877,6 @@ class LLMGenerationManager:
                 'api_name': action_name,  # Use full action_name as api_name for ToolBench
                 'tool_input': action_input,
                 'strip': '',
-                'toolbench_key': self.config.toolbench_key
             }
             
             # Create async task for this API call

@@ -17,7 +17,6 @@ test_cases = [
             "api_name": "Get Open Profile Status",
             "tool_input": json.dumps({"linkedin_url": "https://www.linkedin.com/in/williamhgates/"}),
             "strip": "",
-            "toolbench_key": ""
         }
     },
 ]

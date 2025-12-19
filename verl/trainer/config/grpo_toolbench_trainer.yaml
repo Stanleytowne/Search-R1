@@ -140,8 +140,6 @@ reward_model:
   format_reward_weight: 1
   function_call_reward_weight: 1
   finish_reward_weight: 0.5
-  error_penalty: -0.5
-  finish_bonus: 0.5
   pass_reward_weight: 1
   reward_server_url: "http://localhost:1234/evaluate_batch"
 
@@ -181,4 +179,3 @@ max_turns: 5
 do_search: true  # Must be true for ToolBench mode to enable run_llm_loop and API calls
 use_toolbench: true
 toolbench_url: "http://127.0.0.1:8000"
-toolbench_key: ""
