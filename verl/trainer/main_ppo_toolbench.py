@@ -124,7 +124,10 @@ def main_task(config):
         finish_reward_weight = getattr(config.reward_model, 'finish_reward_weight', 0.3)
         error_penalty = getattr(config.reward_model, 'error_penalty', -0.5)
         finish_bonus = getattr(config.reward_model, 'finish_bonus', 0.5)
-        
+
+        pass_reward_weight = getattr(config.reward_model, 'pass_reward_weight', 0.1)
+        reward_server_url = getattr(config.reward_model, 'reward_server_url', "http://localhost:8000/evaluate_batch")
+
         reward_fn = ToolBenchRewardManager(
             tokenizer=tokenizer,
             format_reward_weight=format_reward_weight,
@@ -132,7 +135,9 @@ def main_task(config):
             finish_reward_weight=finish_reward_weight,
             error_penalty=error_penalty,
             finish_bonus=finish_bonus,
-            num_examine=0
+            num_examine=0,
+            pass_reward_weight=pass_reward_weight,
+            reward_server_url=reward_server_url
         )
 
         # Validation使用相同的reward函数
@@ -143,7 +148,9 @@ def main_task(config):
             finish_reward_weight=finish_reward_weight,
             error_penalty=error_penalty,
             finish_bonus=finish_bonus,
-            num_examine=1  # 验证时打印更多信息
+            num_examine=1,  # 验证时打印更多信息
+            pass_reward_weight=pass_reward_weight,
+            reward_server_url=reward_server_url
         )
     else:
         # 使用原始的RewardManager（用于search模式）

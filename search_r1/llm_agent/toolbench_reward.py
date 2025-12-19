@@ -22,9 +22,11 @@ class ToolBenchRewardManager:
         format_reward_weight: float = 0.1,
         function_call_reward_weight: float = 0.2,
         finish_reward_weight: float = 0.3,
+        pass_reward_weight: float = 0.1,
         error_penalty: float = -0.5,
         finish_bonus: float = 0.5,
-        num_examine: int = 0
+        num_examine: int = 0,
+        reward_server_url: str = "http://localhost:8000/evaluate_batch"
     ):
         """
         Args:
@@ -32,6 +34,7 @@ class ToolBenchRewardManager:
             format_reward_weight: 格式奖励权重
             function_call_reward_weight: Function call奖励权重
             finish_reward_weight: Finish调用奖励权重
+            pass_reward_weight: Remote pass奖励权重
             error_penalty: API调用错误的惩罚
             finish_bonus: 正确调用Finish的奖励
             num_examine: 打印的样本数量
@@ -40,9 +43,11 @@ class ToolBenchRewardManager:
         self.format_reward_weight = format_reward_weight
         self.function_call_reward_weight = function_call_reward_weight
         self.finish_reward_weight = finish_reward_weight
+        self.pass_reward_weight = pass_reward_weight
         self.error_penalty = error_penalty
         self.finish_bonus = finish_bonus
         self.num_examine = num_examine
+        self.reward_server_url = reward_server_url
     
     def __call__(self, data: DataProto) -> torch.Tensor:
         """
@@ -54,47 +59,48 @@ class ToolBenchRewardManager:
         Returns:
             token_level_rewards: (batch_size, response_length)的reward tensor
         """
-        # 如果已经有rm_scores，直接返回
+        # if 'rm_scores' in data.batch.keys(), return the rm_scores
         if 'rm_scores' in data.batch.keys():
             return data.batch['rm_scores']
         
         batch_size = data.batch['responses'].shape[0]
         response_length = data.batch['responses'].shape[1]
         
-        # 初始化reward tensor
+        # init reward tensor
         reward_tensor = torch.zeros((batch_size, response_length), dtype=torch.float32)
         
-        # 从meta_info中获取ToolBench相关信息
-        # meta_info存储在data.meta_info中（DataProto的属性）
+        # get ToolBench related information from meta_info
         meta_info = {}
         if hasattr(data, 'meta_info') and data.meta_info:
             meta_info = data.meta_info
-        
-        # 获取每个样本的信息
+
+        all_queries = []
+        all_trajectories = []
+        valid_info_list = []
+
         for i in range(batch_size):
             data_item = data[i]
-            
-            # 获取response
+
             response_ids = data_item.batch['responses']
             prompt_ids = data_item.batch['prompts']
             prompt_length = prompt_ids.shape[-1]
             attention_mask = data_item.batch['attention_mask']
-            
-            # 使用attention_mask确定有效的prompt和response长度
+
             valid_prompt_length = attention_mask[:prompt_length].sum().item()
             valid_response_length = attention_mask[prompt_length:].sum().item()
             
-            # 只取有效的tokens（避免解码padding tokens）
             valid_prompt_ids = prompt_ids[-valid_prompt_length:] if valid_prompt_length > 0 else prompt_ids
             valid_response_ids = response_ids[:valid_response_length] if valid_response_length > 0 else response_ids
 
-            # 解码response（只解码有效部分）
-            # 注意：response_str包含模型生成的response（Thought/Action/Action Input）和observation（function调用结果）
-            # observation格式为 "Observation: {"error": "...", "response": "..."}"
-            # 虽然observation在训练时会被info_mask排除，但我们可以直接从response_str中解析来获取error信息
+            prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
+            query_str = self._extract_query(prompt_str)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
-            # 调试输出（只解码有效部分）
+            all_queries.append(query_str)
+            all_trajectories.append(response_str)
+            valid_info_list.append(valid_response_length)
+
+            # debug output
             if i == 0:
                 print("#" * 30)
                 print("[DEBUG REWARD] PROMPT (valid tokens only):")
@@ -112,10 +118,15 @@ class ToolBenchRewardManager:
                 trained = torch.where(info_mask.bool(), valid_response_ids, self.tokenizer.pad_token_id)
                 print(self.tokenizer.decode(trained, skip_special_tokens=False))
                 print("#" * 30)
+        
+        pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
 
-            
-            # 获取原始样本索引（处理batch repeat的情况）
-            # 如果batch被repeat了，需要通过index找到原始样本
+        # 获取每个样本的信息
+        for i in range(batch_size):
+            data_item = data[i]
+            response_str = all_trajectories[i]
+            valid_response_length = valid_info_list[i]
+
             original_idx = i
             if hasattr(data_item, 'non_tensor_batch') and data_item.non_tensor_batch and 'index' in data_item.non_tensor_batch:
                 original_idx = int(data_item.non_tensor_batch['index'])
@@ -131,13 +142,6 @@ class ToolBenchRewardManager:
                 response_str, valid_response_length
             )
             
-            # 调试输出
-            if i == 0:
-                observations = self._parse_observations(response_str)
-                print(f"[DEBUG Reward] Sample {i} (original_idx={original_idx})")
-                print(f"  Parsed {len(observations)} observations from response_str")
-                print(f"  function_call_reward: {function_call_reward}")
-            
             # 3. Finish调用奖励：检查最后一次是否调用了Finish
             finish_reward = self._compute_finish_reward(
                 response_str, original_idx, meta_info, valid_response_length
@@ -145,6 +149,7 @@ class ToolBenchRewardManager:
             
             # 组合reward
             total_reward = (
+                self.pass_reward_weight * pass_rewards[i] +
                 self.format_reward_weight * format_reward +
                 self.function_call_reward_weight * function_call_reward +
                 self.finish_reward_weight * finish_reward
@@ -161,6 +166,7 @@ class ToolBenchRewardManager:
             if i < self.num_examine:
                 print(f"\n[Reward Sample {i}]")
                 print(f"  Response: {response_str[:200]}...")
+                print(f"  Pass reward: {pass_rewards[i]:.3f}")
                 print(f"  Format reward: {format_reward:.3f}")
                 print(f"  Function call reward: {function_call_reward:.3f}")
                 print(f"  Finish reward: {finish_reward:.3f}")
@@ -168,6 +174,17 @@ class ToolBenchRewardManager:
         
         return reward_tensor
     
+    def _extract_query(self, full_prompt: str) -> str:
+        import re
+        pattern = r'<|im_start|>user\n?(.*?)(?=<|im_end|>|$)'
+        matches = re.findall(pattern, full_prompt, re.DOTALL)
+        
+        if matches:
+            query = matches[-1].strip()
+            return query
+        
+        return full_prompt.strip()
+
     def _compute_format_reward(self, response_str: str, response_length: int) -> float:
         """
         计算格式奖励
@@ -373,6 +390,24 @@ class ToolBenchRewardManager:
         # 这样可以避免在中间步骤错误地给予Finish奖励
         
         return 0.0
+
+    def _get_remote_pass_rewards(self, queries: List[str], trajectories: List[str]) -> List[float]:
+        """通过 HTTP 调用远程 Reward Server"""
+        payload = {
+            "queries": queries,
+            "trajectories": trajectories
+        }
+        try:
+            response = requests.post(self.reward_server_url, json=payload, timeout=60)
+            if response.status_code == 200:
+                return response.json().get("scores", [0.5] * len(queries))
+            else:
+                print(f"Remote server error: {response.status_code}")
+                return [0.5] * len(queries)
+        except Exception as e:
+            print(f"Failed to connect to reward server: {e}")
+            return [0.5] * len(queries)
+
 
 
 def create_toolbench_reward_manager(

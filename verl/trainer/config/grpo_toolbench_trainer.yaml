@@ -137,11 +137,13 @@ reward_model:
   use_dynamic_bsz: ${critic.use_dynamic_bsz}
   forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
   # ToolBench reward weights
-  format_reward_weight: 0.1
-  function_call_reward_weight: 0.2
-  finish_reward_weight: 0.3
+  format_reward_weight: 1
+  function_call_reward_weight: 1
+  finish_reward_weight: 0.5
   error_penalty: -0.5
   finish_bonus: 0.5
+  pass_reward_weight: 1
+  reward_server_url: "http://localhost:1234/evaluate_batch"
 
 retriever:
   url: "http://127.0.0.1:8000/retrieve"
