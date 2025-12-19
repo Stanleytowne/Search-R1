@@ -1,0 +1,8 @@
+api_key:
+api_base:
+model: gpt-4o-mini
+temperature: 1.0
+tools_folder: "./tools"
+cache_folder: "./tool_response_cache"
+is_save: false
+port: 8080
