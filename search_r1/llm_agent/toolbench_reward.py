@@ -10,6 +10,7 @@ import torch
 import re
 import json
 from typing import List, Dict
+import requests
 from verl import DataProto
 
 
@@ -92,7 +93,7 @@ class ToolBenchRewardManager:
             valid_prompt_ids = prompt_ids[-valid_prompt_length:] if valid_prompt_length > 0 else prompt_ids
             valid_response_ids = response_ids[:valid_response_length] if valid_response_length > 0 else response_ids
 
-            prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=True)
+            prompt_str = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
             query_str = self._extract_query(prompt_str)
             response_str = self.tokenizer.decode(valid_response_ids, skip_special_tokens=False)
             
@@ -105,7 +106,7 @@ class ToolBenchRewardManager:
                 print("#" * 30)
                 print("[DEBUG REWARD] PROMPT (valid tokens only):")
                 if valid_prompt_length > 0:
-                    print(self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False))
+                    print(prompt_str)
                 else:
                     print("[DEBUG REWARD] (empty)")
                 print("#" * 30)
