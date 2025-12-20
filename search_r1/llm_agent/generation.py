@@ -48,6 +48,7 @@ class GenerationConfig:
     # ToolBench related configs
     use_toolbench: bool = False
     toolbench_url: str = None
+    toolbench_max_concurrent: int = 20  # 限制同时并发的 API 请求数量，防止内存 OOM
 
 class LLMGenerationManager:
     def __init__(
@@ -83,6 +84,13 @@ class LLMGenerationManager:
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=100)
         timeout = httpx.Timeout(30.0, connect=10.0) # connect 超时设短一点，fail fast
         self.async_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+        
+        # =========================================================================
+        # [并发控制] 使用 Semaphore 限制同时并发的 API 请求数量
+        # 防止在 batch 很大时同时发起过多请求导致内存 OOM
+        # =========================================================================
+        max_concurrent = getattr(config, 'toolbench_max_concurrent', 20)
+        self.api_call_semaphore = asyncio.Semaphore(max_concurrent)
 
     def __del__(self):
         """析构函数：确保关闭网络连接"""
@@ -919,23 +927,26 @@ class LLMGenerationManager:
     ) -> Dict:
         """
         使用 self.async_client 发送请求，不再创建新连接。
+        使用 Semaphore 控制并发数量，防止内存 OOM。
         """
-        try:
-            # 直接使用初始化好的 client
-            response = await self.async_client.post(url, json=payload)
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                # 只有出错时才 print，减少 I/O
-                # print(f"[DEBUG] Error {response.status_code} for {action_name}")
+        # 使用 semaphore 限制并发数量
+        async with self.api_call_semaphore:
+            try:
+                # 直接使用初始化好的 client
+                response = await self.async_client.post(url, json=payload)
+                
+                if response.status_code == 200:
+                    return response.json()
+                else:
+                    # 只有出错时才 print，减少 I/O
+                    # print(f"[DEBUG] Error {response.status_code} for {action_name}")
+                    return {
+                        'error': f'API call failed with status {response.status_code}',
+                        'response': ''
+                    }
+            except Exception as e:
+                # print(f"[DEBUG] Exception for {action_name}: {str(e)}")
                 return {
-                    'error': f'API call failed with status {response.status_code}',
+                    'error': f'API call error: {str(e)}',
                     'response': ''
                 }
-        except Exception as e:
-            # print(f"[DEBUG] Exception for {action_name}: {str(e)}")
-            return {
-                'error': f'API call error: {str(e)}',
-                'response': ''
-            }
