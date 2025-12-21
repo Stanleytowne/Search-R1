@@ -10,7 +10,7 @@ data:
   max_start_length: 7168
   max_obs_length: 2000
   train_batch_size: 64
-  val_batch_size: 64
+  val_batch_size: 1
   return_raw_input_ids: False
   return_raw_chat: False
   shuffle_train_dataloader: True
@@ -169,7 +169,7 @@ trainer:
   nnodes: 1
   n_gpus_per_node: 8
   save_freq: 100
-  test_freq: 100
+  test_freq: 10
   critic_warmup: 0
   default_hdfs_dir: null
   default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
