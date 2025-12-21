@@ -120,9 +120,10 @@ class ToolBenchRewardManager:
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
-            valid_response_length = valid_info_list[i]
-            if valid_response_length > 0:
-                reward_tensor[i, valid_response_length - 1] = total_reward
+            for i in range(batch_size):
+                valid_response_length = valid_info_list[i]
+                if valid_response_length > 0:
+                    reward_tensor[i, valid_response_length - 1] = pass_rewards[i]
             return reward_tensor
 
         # 获取每个样本的信息
