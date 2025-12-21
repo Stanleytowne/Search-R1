@@ -119,6 +119,12 @@ class ToolBenchRewardManager:
         
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
 
+        if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
+            valid_response_length = valid_info_list[i]
+            if valid_response_length > 0:
+                reward_tensor[i, valid_response_length - 1] = total_reward
+            return reward_tensor
+
         # 获取每个样本的信息
         for i in range(batch_size):
             data_item = data[i]
@@ -401,10 +407,10 @@ class ToolBenchRewardManager:
                 return response.json().get("scores", [0.5] * len(queries))
             else:
                 print(f"Remote server error: {response.status_code}")
-                return [0.5] * len(queries)
+                return [0.0] * len(queries)
         except Exception as e:
             print(f"Failed to connect to reward server: {e}")
-            return [0.5] * len(queries)
+            return [0.0] * len(queries)
 
 
 
