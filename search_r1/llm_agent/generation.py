@@ -506,8 +506,8 @@ class LLMGenerationManager:
         final_output.meta_info.update(meta_info)
         
         # Debug: Print full conversation for first sample
-        if final_output.batch['input_ids'].shape[0] > 0:
-            self._debug_print_full_conversation(final_output, 0)
+        # if final_output.batch['input_ids'].shape[0] > 0:
+        #     self._debug_print_full_conversation(final_output, 0)
         
         return final_output
 
@@ -517,12 +517,12 @@ class LLMGenerationManager:
             # Get prompt (initial input)
             prompt_ids = final_output.batch['prompts'][sample_idx]
             prompt_mask = final_output.batch['attention_mask'][sample_idx, :prompt_ids.shape[0]]
-            valid_prompt_ids = prompt_ids[prompt_mask.bool()]
+            valid_prompt_ids = prompt_ids[prompt_mask.bool()].int()
             
             # Get full input_ids (prompt + responses)
             input_ids = final_output.batch['input_ids'][sample_idx]
             attention_mask = final_output.batch['attention_mask'][sample_idx]
-            valid_input_ids = input_ids[attention_mask.bool()]
+            valid_input_ids = input_ids[attention_mask.bool()].int()
             
             # Decode prompt
             prompt_text = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
