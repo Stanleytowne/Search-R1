@@ -687,7 +687,7 @@ class LLMGenerationManager:
             action_start = prediction.find("Action: ")
             action_input_start = prediction.find("\nAction Input: ")
             
-            if action_start != -1 and action_input_start != -1:
+            if thought_start != -1 and action_start != -1 and action_input_start != -1:
                 action_name_raw = prediction[action_start + len("Action: "):action_input_start].strip()
                 # Normalize API name: convert to lowercase and replace spaces with underscores
                 action_name = normalize_api_name(action_name_raw)
