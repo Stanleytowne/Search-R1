@@ -73,7 +73,7 @@ class LLMGenerationManager:
         # Track API calls and Finish calls for reward computation
         # Format: {sample_idx: [list of (error, success)]}
         self.api_call_history = {}
-        # Format: {sample_idx: 'give_answer' | 'give_up' | None}
+        # Format: {sample_idx: True | False}
         self.finish_call_history = {}
 
         # =========================================================================
@@ -397,7 +397,7 @@ class LLMGenerationManager:
             # Map active indices back to original batch indices for API call tracking
             active_indices = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
             next_obs, dones, valid_action = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask, original_indices=active_indices
+                responses_str, active_mask, original_indices=active_indices
             )
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
@@ -446,7 +446,7 @@ class LLMGenerationManager:
             # Map active indices back to original batch indices
             active_indices_final = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
             _, dones, valid_action = self.execute_predictions(
-                responses_str, self.tokenizer.pad_token, active_mask, do_search=False, original_indices=active_indices_final
+                responses_str, active_mask, original_indices=active_indices_final
             )
 
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
@@ -564,7 +564,7 @@ class LLMGenerationManager:
             import traceback
             traceback.print_exc()
 
-    def execute_predictions(self, predictions: List[str], pad_token: str, active_mask=None, do_search=True, original_indices=None) -> List[str]:
+    def execute_predictions(self, predictions: List[str], active_mask=None, original_indices=None) -> List[str]:
         """
         Execute predictions across multiple environments.
         NOTE: the function is the actual `step` function in the environment
@@ -572,9 +572,7 @@ class LLMGenerationManager:
         
         Args:
             predictions: List of action predictions
-            pad_token: Token to use for padding
             active_mask: Mask indicating which examples are still active
-            do_search: Whether to actually execute search/API calls
             original_indices: List of original batch indices (for mapping active batch indices back to original)
             
         Returns:
@@ -616,24 +614,23 @@ class LLMGenerationManager:
             print(f"[DEBUG] No API calls to make (api_calls is empty)")
         
         # Process results
-        api_result_idx = 0
         for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
             if not active:
                 next_obs.append('')
                 dones.append(1)
                 valid_action.append(0)
             elif action == 'Finish':
-                # Check if it's give_answer or give_up
-                if isinstance(content_dict, dict) and 'action_input' in content_dict:
-                    return_type = content_dict['action_input'].get('return_type', 'give_answer')
+                if isinstance(content_dict, dict) and 'final_answer' in content_dict:
                     # Track Finish call for reward computation
                     # Use original batch index
                     original_idx = original_indices[i] if i < len(original_indices) else i
-                    self.finish_call_history[original_idx] = return_type
+                    self.finish_call_history[original_idx] = True
                     next_obs.append('')
                     dones.append(1)
                     valid_action.append(1)
                 else:
+                    # Finish call is invalid
+                    self.finish_call_history[original_idx] = False
                     next_obs.append('')
                     dones.append(1)
                     valid_action.append(1)
@@ -686,66 +683,63 @@ class LLMGenerationManager:
         """
         actions = []
         contents = []
+        
+        for prediction in predictions:
+            # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
+            thought_start = prediction.find("Thought: ")
+            action_start = prediction.find("\nAction: ")
+            action_input_start = prediction.find("\nAction Input: ")
+            
+            if thought_start != -1 and action_start != -1 and action_input_start != -1:
+                action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
+                # Normalize API name: convert to lowercase and replace spaces with underscores
+                action_name = normalize_api_name(action_name_raw)
+                action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
                 
-        for idx, prediction in enumerate(predictions):
-            if isinstance(prediction, str): # for llm output
-                # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
-                thought_start = prediction.find("Thought: ")
-                action_start = prediction.find("\nAction: ")
-                action_input_start = prediction.find("\nAction Input: ")
+                # Try to parse JSON - handle both single-line and multi-line JSON
+                action_input = {}
+                try:
+                    # First try direct JSON parsing
+                    action_input = json.loads(action_input_str)
+                except json.JSONDecodeError:
+                    # If that fails, try to find the JSON object boundaries
+                    # Look for the first { and try to find matching }
+                    brace_start = action_input_str.find('{')
+                    if brace_start != -1:
+                        brace_count = 0
+                        brace_end = brace_start
+                        for i in range(brace_start, len(action_input_str)):
+                            if action_input_str[i] == '{':
+                                brace_count += 1
+                            elif action_input_str[i] == '}':
+                                brace_count -= 1
+                                if brace_count == 0:
+                                    brace_end = i + 1
+                                    break
+                        if brace_count == 0:
+                            try:
+                                action_input = json.loads(action_input_str[brace_start:brace_end])
+                            except json.JSONDecodeError:
+                                # Last resort: try to extract key-value pairs
+                                for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                                    action_input[match.group(1)] = match.group(2)
+                                for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                                    action_input[match.group(1)] = int(match.group(2))
+                    else:
+                        # No JSON object found, try regex extraction
+                        for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
+                            action_input[match.group(1)] = match.group(2)
+                        for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
+                            action_input[match.group(1)] = int(match.group(2))
                 
-                if thought_start != -1 and action_start != -1 and action_input_start != -1:
-                    action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
-                    # Normalize API name: convert to lowercase and replace spaces with underscores
-                    action_name = normalize_api_name(action_name_raw)
-                    action_input_str = prediction[action_input_start + len("\nAction Input: "):].strip()
-                    
-                    # Try to parse JSON - handle both single-line and multi-line JSON
-                    action_input = {}
-                    try:
-                        # First try direct JSON parsing
-                        action_input = json.loads(action_input_str)
-                    except json.JSONDecodeError:
-                        # If that fails, try to find the JSON object boundaries
-                        # Look for the first { and try to find matching }
-                        brace_start = action_input_str.find('{')
-                        if brace_start != -1:
-                            brace_count = 0
-                            brace_end = brace_start
-                            for i in range(brace_start, len(action_input_str)):
-                                if action_input_str[i] == '{':
-                                    brace_count += 1
-                                elif action_input_str[i] == '}':
-                                    brace_count -= 1
-                                    if brace_count == 0:
-                                        brace_end = i + 1
-                                        break
-                            if brace_count == 0:
-                                try:
-                                    action_input = json.loads(action_input_str[brace_start:brace_end])
-                                except json.JSONDecodeError:
-                                    # Last resort: try to extract key-value pairs
-                                    for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
-                                        action_input[match.group(1)] = match.group(2)
-                                    for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
-                                        action_input[match.group(1)] = int(match.group(2))
-                        else:
-                            # No JSON object found, try regex extraction
-                            for match in re.finditer(r'"(\w+)":\s*"([^"]*)"', action_input_str):
-                                action_input[match.group(1)] = match.group(2)
-                            for match in re.finditer(r'"(\w+)":\s*(\d+)', action_input_str):
-                                action_input[match.group(1)] = int(match.group(2))
-                    
-                    actions.append(action_name)
-                    contents.append({
-                        'action_name': action_name,
-                        'action_input': action_input
-                    })
-                else:
-                    actions.append(None)
-                    contents.append({})
+                actions.append(action_name)
+                contents.append({
+                    'action_name': action_name,
+                    'action_input': action_input
+                })
             else:
-                raise ValueError(f"Invalid prediction type: {type(prediction)}")
+                actions.append(None)
+                contents.append({})
             
         return actions, contents
     

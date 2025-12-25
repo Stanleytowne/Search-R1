@@ -152,9 +152,9 @@ class ToolBenchRewardManager:
                 response_str, valid_response_length
             )
             
-            # 3. Finish调用奖励：检查最后一次是否调用了Finish
+            # 3. Finish reward
             finish_reward = self._compute_finish_reward(
-                response_str, original_idx, meta_info, valid_response_length
+                original_idx, meta_info
             )
             
             # 组合reward
@@ -372,32 +372,18 @@ class ToolBenchRewardManager:
         
         return observations
     
-    def _compute_finish_reward(self, response_str: str, sample_idx: int, meta_info: Dict, response_length: int) -> float:
+    def _compute_finish_reward(self, sample_idx: int, meta_info: Dict) -> float:
         """
-        计算Finish调用奖励
-        检查最后一次是否调用了Finish函数
-        
-        注意：这个函数会在每轮生成时被调用，但Finish奖励应该只在最后一步给予。
-        我们通过检查meta_info中的finish_called来判断是否真的调用了Finish。
-        如果当前response包含Finish但meta_info中没有记录，说明这是中间步骤，不应该给奖励。
+        Compute finish reward
+        Args:
+            sample_idx: sample index
+            meta_info: meta information
+        Returns:
+            finish reward
         """
-        # 优先从meta_info中获取（更可靠）
-        # meta_info中的finish_called只在execute_predictions中检测到Finish时才会设置
         finish_called = meta_info.get('finish_called', {})
         if sample_idx in finish_called and finish_called[sample_idx] is not None:
-            # 只有在meta_info中记录了Finish调用，才给予奖励
-            # 这确保了只有在execute_predictions中真正检测到Finish时才给奖励
-            return_type = finish_called[sample_idx]
-            if return_type == 'give_answer':
-                return 1
-            elif return_type == 'give_up':
-                return 0.5  # 部分奖励（至少调用了Finish）
-            else:
-                return 0.3  # Finish存在但格式可能不对
-        
-        # 如果meta_info中没有Finish记录，即使response_str中有Finish，也不给奖励
-        # 因为可能是中间步骤的response，还没有真正执行Finish
-        # 这样可以避免在中间步骤错误地给予Finish奖励
+            return finish_called[sample_idx]
         
         return 0.0
 
