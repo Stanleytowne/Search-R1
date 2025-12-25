@@ -47,6 +47,3 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     +trainer.val_before_train=true \
     +trainer.val_only=true
-
-echo ""
-echo "Training completed!"
