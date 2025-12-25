@@ -685,11 +685,12 @@ class LLMGenerationManager:
         
         for prediction in predictions:
             # Parse ToolBench format: Thought: ...\nAction: ...\nAction Input: ...
+            # Thought is optional (?)
             thought_start = prediction.find("Thought: ")
             action_start = prediction.find("\nAction: ")
             action_input_start = prediction.find("\nAction Input: ")
             
-            if thought_start != -1 and action_start != -1 and action_input_start != -1:
+            if action_start != -1 and action_input_start != -1:
                 action_name_raw = prediction[action_start + len("\nAction: "):action_input_start].strip()
                 # Normalize API name: convert to lowercase and replace spaces with underscores
                 action_name = normalize_api_name(action_name_raw)
