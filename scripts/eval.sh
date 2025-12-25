@@ -26,7 +26,7 @@ EXPERIMENT_NAME=${CATEGORY}
 
 PASS_REWARD_WEIGHT=1
 
-VAL_BATCH_SIZE=$(python3 -c "import pandas as pd; import sys; val_file='$VAL_FILE'; df=pd.read_parquet(val_file); print(len(df))")
+VAL_BATCH_SIZE=4
 
 # 运行训练
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
