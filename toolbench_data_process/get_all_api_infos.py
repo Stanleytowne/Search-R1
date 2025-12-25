@@ -121,40 +121,27 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> List[Dict]:
     
     return api_list_formatted
 
-def process_toolbench_json(input_file: str = None, output_file: str = None, 
-                          max_samples: int = None, data: List[Dict] = None):
+def process_toolbench_json(input_file: str = None, output_dir: str = None):
     """
     Process G1_query.json format and convert to parquet format.
     
     Args:
         input_file: Input G1_query.json file path (if data is None)
-        output_file: Output parquet file path
-        max_samples: Maximum number of samples to process (for testing)
-        data: Directly provided data (if input_file is None)
+        output_dir: Output directory
     """
-    if data is None:
-        if input_file is None:
-            raise ValueError("Either input_file or data must be provided")
-        print(f"Reading {input_file}...")
-        with open(input_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    else:
-        print(f"Processing provided data...")
+    print(f"Reading {input_file}...")
+    with open(input_file, 'r', encoding='utf-8') as f:
+        data = json.load(f)
     
     print(f"Found {len(data)} samples")
     
-    if max_samples and max_samples > 0:
-        data = data[:max_samples]
-        print(f"Processing first {len(data)} samples")
-    
     records = {}
     
-    for idx, sample in enumerate(data):        
+    for sample in data:        
         # Get api_list from this sample only (not the entire category)
         api_list = sample['api_list']
         
         # Construct conversations
-        sample_id = sample["query_id"]
         api_list_formatted = convert_api_list_to_system_format(api_list)
         
         # Extract category from api_list (use first API's category_name)
@@ -169,15 +156,14 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
                 records[category][api_name] = api
 
     # 创建输出目录
-    output_dir = Path("data/api_infos")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
     
     for category, api_list in records.items():
         print(f"Category: {category} with {len(api_list)} APIs")
 
-        output_file = output_dir / f"{category}.json"
+        output_file = os.path.join(output_dir, f"{category}.json")
         # 如果输出文件已存在，则读取已有内容，加上新的不重复的部分
-        if output_file.exists():
+        if os.path.exists(output_file):
             try:
                 with open(output_file, 'r', encoding='utf-8') as f:
                     original_data = json.load(f)
@@ -199,21 +185,19 @@ def process_toolbench_json(input_file: str = None, output_file: str = None,
             json.dump(merged_data, f, ensure_ascii=False, indent=4)
 
 def main():
-    input_files = [
-        "../StableToolBench/data/instruction/G1_query.json",
-        "../StableToolBench/data/instruction/G2_query.json",
-        "../StableToolBench/solvable_queries/test_instruction/G1_category.json",
-        "../StableToolBench/solvable_queries/test_instruction/G1_instruction.json",
-        "../StableToolBench/solvable_queries/test_instruction/G1_tool.json",
-        "../StableToolBench/solvable_queries/test_instruction/G2_category.json",
-        "../StableToolBench/solvable_queries/test_instruction/G2_instruction.json",
-    ]
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument("--input_files", nargs='+', type=str, default=['data/toolbench_instruction/G1_query.json', 'data/toolbench_instruction/G2_query.json'],
+                       help="Input files")
+    parser.add_argument("--output_dir", type=str, default="data/api_infos",
+                       help="Output directory")
+    args = parser.parse_args()
 
-    for input_file in input_files:
+    for input_file in args.input_files:
         process_toolbench_json(
-            input_file=input_file
+            input_file=input_file,
+            output_dir=args.output_dir
         )
-
 
 if __name__ == "__main__":
     main()

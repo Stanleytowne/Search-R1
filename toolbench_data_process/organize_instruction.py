@@ -4,9 +4,6 @@ import re
 import argparse
 from collections import defaultdict
 
-DATA_DIR = "../StableToolBench/data/instruction"
-OUTPUT_DIR = "./data/toolbench_instruction"
-
 def sanitize_filename(name):
     """
     清洗文件名，去掉非法字符（如 / \ : * ? " < > |），将空格转为下划线
@@ -47,13 +44,12 @@ def save_grouped_data(grouped_data, base_folder):
     
     print(f"完成！共生成 {count} 个分类文件。")
 
-def process_files(files):
+def process_files(files, output_dir):
     by_category = defaultdict(list)
     
     all_items = []
-    for file_name in files:
-        path = os.path.join(DATA_DIR, file_name)
-        data = load_json(path)
+    for file in files:
+        data = load_json(file)
         all_items.extend(data)
         
     print(f"\nG2 总数据量: {len(all_items)} 条")
@@ -76,19 +72,28 @@ def process_files(files):
             by_category[category_name].append(item)
 
     # 保存
-    save_grouped_data(by_category, OUTPUT_DIR)
+    save_grouped_data(by_category, output_dir)
 
 def main():
-    # 定义要处理的文件列表
-    files = ['G1_query.json', 'G2_query.json']
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument("--input_dir", type=str, default="../StableToolBench/data/instruction",
+                       help="Input directory")
+    parser.add_argument("--output_dir", type=str, default="./data/toolbench_instruction",
+                       help="Output directory")
+    parser.add_argument("--files", type=str, nargs='+', default=['G1_query.json', 'G2_query.json'],
+                       help="Files to process")
+    args = parser.parse_args()
     
-    # 确保输出目录存在
-    if not os.path.exists(OUTPUT_DIR):
-        os.makedirs(OUTPUT_DIR)
-    
-    process_files(files)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
 
-    print(f"\n全部完成！请检查文件夹: {os.path.abspath(OUTPUT_DIR)}")
+    files = []
+    for file in args.files:
+        files.append(os.path.join(args.input_dir, file))
+    process_files(files, args.output_dir)
+
+    print(f"\n全部完成！请检查文件夹: {os.path.abspath(args.output_dir)}")
 
 if __name__ == "__main__":
     main()

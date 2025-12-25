@@ -59,7 +59,6 @@ After the action is executed, you will receive the result (Observation). Based o
 Constraints & Rules:
 1. **Action Field**: The "Action" output must be the EXACT name of the function. Do NOT include parentheses `()`, words like "call" or "use", or any punctuation.
 2. **Finishing**: You MUST call the "Finish" function to submit your final answer. 
-3. **Failure**: If you cannot complete the task or verify that a tool is broken after retries, call "Finish" with "return_type" as "give_up".
 
 Available Tools:
 {api_list}
@@ -147,20 +146,16 @@ def convert_api_list_to_system_format(api_list: List[Dict]) -> List[Dict]:
     # 添加Finish函数
     finish_api = {
         'name': 'Finish',
-        'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
+        'description': 'If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.',
         'parameters': {
             'properties': {
-                'return_type': {
-                    'type': 'string',
-                    'enum': ['give_answer', 'give_up']
-                },
                 'final_answer': {
                     'type': 'string',
-                    'description': 'The final answer you want to give the user. You should have this field if "return_type"=="give_answer"'
+                    'description': 'The final answer you want to give the user.'
                 }
             },
-            'required': ['return_type'],
-            'optional': ['final_answer']
+            'required': ['final_answer'],
+            'optional': []
         }
     }
     api_list_formatted.append(finish_api)

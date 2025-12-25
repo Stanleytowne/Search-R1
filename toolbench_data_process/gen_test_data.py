@@ -22,6 +22,8 @@ from typing import List, Dict, Any, Optional
 import os
 import random
 
+from system_prompt import SYSTEM_PROMPT
+
 def normalize_api_name(api_name: str) -> str:
     """
     Normalize API name: convert to lowercase and replace spaces with underscores.
@@ -39,34 +41,6 @@ def normalize_api_name(api_name: str) -> str:
     if api_name.strip() == "Finish":
         return "Finish"
     return api_name.lower().replace(' ', '_')
-
-SYSTEM_PROMPT = """You are an intelligent agent designed to handle real-time user queries using a variety of tools.
-
-First, you will receive a task description. Then, you will enter a loop of reasoning and acting to complete the task.
-
-At each step, follow this process:
-1. **Thought**: Analyze the current status and determine the next logical step.
-2. **Action**: Select the appropriate tool to execute that step and output the function name directly.
-3. **Action Input**: Provide the arguments for the tool as a STRICT valid JSON object.
-
-Output Format:
-Thought: <your reasoning>
-Action: <function_name>
-Action Input: <function_arguments_as_a_valid_JSON_object>
-
-After the action is executed, you will receive the result (Observation). Based on the new state, continue the loop until the task is complete.
-
-Constraints & Rules:
-1. **Action Field**: The "Action" output must be the EXACT name of the function. Do NOT include parentheses `()`, words like "call" or "use", or any punctuation.
-2. **Finishing**: You MUST call the "Finish" function to submit your final answer. 
-3. **Failure**: If you cannot complete the task or verify that a tool is broken after retries, call "Finish" with "return_type" as "give_up".
-
-Available Tools:
-1. **General Tools**: You have been trained on a specific set of APIs. You must rely on your **internal knowledge** to recall the correct function names and parameter schemas for these tools. Do not hallucinate tools that do not exist in your training data.
-2. **Termination Tool**: You MUST use the following tool to finish the task. Its definition is provided below:
-{"name": "Finish", "description": "If you believe that you have obtained a result that can answer the task, please call this function to provide the final answer. Alternatively, if you recognize that you are unable to proceed with the task in the current state, call this function to give up. Remember: you must ALWAYS call this function at the end of your attempt, and the only part that will be shown to the user is the final answer, so it should contain sufficient information.", "parameters": {"properties": {"return_type": {"type": "string", "enum": ["give_answer", "give_up"]}, "final_answer": {"type": "string", "description": "The final answer you want to give the user. You should have this field if 'return_type'=='give_answer'"}}}, "required": ["return_type"], "optional": ["final_answer"]}
-"""
-
 
 def convert_api_list_to_system_format(api_list: List[Dict]) -> List[Dict]:
     """
@@ -166,14 +140,13 @@ def convert_toolbench_to_conversations(sample: Dict) -> List[Dict]:
     
     # 转换API列表格式
     api_list_formatted = convert_api_list_to_system_format(api_list)
-    system_message = SYSTEM_PROMPT
     
     # 构建conversations
     conversations = [
         {
             "from": "system",
             "role": "system",
-            "content": system_message
+            "content": SYSTEM_PROMPT
         },
         {
             "from": "user",
@@ -319,35 +292,21 @@ def split_train_val(input_file: str, train_output: str, val_output: str,
 
 def main():
     parser = argparse.ArgumentParser(description="Convert StableToolBench data to verl format")
-    parser.add_argument("--input", type=str, default="data/toolbench_test_instruction/Email.json",
-                       help="Input JSON file path")
-    parser.add_argument("--output", type=str, default='data/toolbench_test/Email.parquet',
-                       help="Output parquet file path")
-    parser.add_argument("--max_samples", type=int, default=None,
-                       help="Maximum number of samples to process (for testing)")
-    parser.add_argument("--split", action="store_true",
-                       help="Split into train/val sets")
-    parser.add_argument("--train_ratio", type=float, default=0.9,
-                       help="Ratio of training data (when using --split)")
+    parser.add_argument("--input_dir", type=str, default="data/toolbench_test_instruction",
+                       help="Input directory")
+    parser.add_argument("--output_dir", type=str, default='data/toolbench_test',
+                       help="Output directory")
     
     args = parser.parse_args()
-    
-    if args.split:
-        train_output = args.output.replace(".parquet", "_train.parquet")
-        val_output = args.output.replace(".parquet", "_val.parquet")
-        
-        split_train_val(
-            input_file=args.input,
-            train_output=train_output,
-            val_output=val_output,
-            train_ratio=args.train_ratio,
-            max_samples=args.max_samples
-        )
-    else:
+
+    input_files = os.listdir(args.input_dir)
+    for input_file in input_files:
+        input_file_path = os.path.join(args.input_dir, input_file)
+        output_file_path = os.path.join(args.output_dir, input_file.replace('.json', '.parquet'))
         process_toolbench_json(
-            input_file=args.input,
-            output_file=args.output,
-            max_samples=args.max_samples
+            input_file=input_file_path,
+            output_file=output_file_path,
+            max_samples=None
         )
 
 
