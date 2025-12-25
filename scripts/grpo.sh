@@ -83,7 +83,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.rollout.n_agent="$N_AGENT" \
-    use_toolbench=true \
     toolbench_url="$TOOLBENCH_URL" \
     reward_model.reward_server_url="$REWARD_SERVER_URL" \
     algorithm.adv_estimator=grpo \

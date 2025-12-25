@@ -112,45 +112,36 @@ def main_task(config):
             raise NotImplementedError
         role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
         mapping[Role.RewardModel] = global_pool_id
-
-    # 检查是否使用ToolBench模式
-    use_toolbench = getattr(config, 'use_toolbench', False)
     
-    if use_toolbench:
-        # 创建ToolBench Reward Manager
-        # 从config中读取reward权重（如果配置了）
-        format_reward_weight = getattr(config.reward_model, 'format_reward_weight', 0.1)
-        function_call_reward_weight = getattr(config.reward_model, 'function_call_reward_weight', 0.2)
-        finish_reward_weight = getattr(config.reward_model, 'finish_reward_weight', 0.3)
+    # 创建ToolBench Reward Manager
+    # 从config中读取reward权重（如果配置了）
+    format_reward_weight = getattr(config.reward_model, 'format_reward_weight', 0.1)
+    function_call_reward_weight = getattr(config.reward_model, 'function_call_reward_weight', 0.2)
+    finish_reward_weight = getattr(config.reward_model, 'finish_reward_weight', 0.3)
 
-        pass_reward_weight = getattr(config.reward_model, 'pass_reward_weight', 0.1)
-        reward_server_url = getattr(config.reward_model, 'reward_server_url', "http://localhost:8000/evaluate_batch")
+    pass_reward_weight = getattr(config.reward_model, 'pass_reward_weight', 0.1)
+    reward_server_url = getattr(config.reward_model, 'reward_server_url', "http://localhost:8000/evaluate_batch")
 
-        reward_fn = ToolBenchRewardManager(
-            tokenizer=tokenizer,
-            format_reward_weight=format_reward_weight,
-            function_call_reward_weight=function_call_reward_weight,
-            finish_reward_weight=finish_reward_weight,
-            num_examine=1,
-            pass_reward_weight=pass_reward_weight,
-            reward_server_url=reward_server_url
-        )
+    reward_fn = ToolBenchRewardManager(
+        tokenizer=tokenizer,
+        format_reward_weight=format_reward_weight,
+        function_call_reward_weight=function_call_reward_weight,
+        finish_reward_weight=finish_reward_weight,
+        num_examine=1,
+        pass_reward_weight=pass_reward_weight,
+        reward_server_url=reward_server_url
+    )
 
-        # Validation使用相同的reward函数
-        val_reward_fn = ToolBenchRewardManager(
-            tokenizer=tokenizer,
-            format_reward_weight=format_reward_weight,
-            function_call_reward_weight=function_call_reward_weight,
-            finish_reward_weight=finish_reward_weight,
-            num_examine=1,  # 验证时打印更多信息
-            pass_reward_weight=pass_reward_weight,
-            reward_server_url=reward_server_url
-        )
-    else:
-        # 使用原始的RewardManager（用于search模式）
-        from verl.trainer.main_ppo import RewardManager
-        reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0)
-        val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1)
+    # Validation使用相同的reward函数
+    val_reward_fn = ToolBenchRewardManager(
+        tokenizer=tokenizer,
+        format_reward_weight=format_reward_weight,
+        function_call_reward_weight=function_call_reward_weight,
+        finish_reward_weight=finish_reward_weight,
+        num_examine=1,  # 验证时打印更多信息
+        pass_reward_weight=pass_reward_weight,
+        reward_server_url=reward_server_url
+    )
 
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
     trainer = RayPPOTrainer(config=config,

@@ -452,7 +452,6 @@ class RayPPOTrainer(object):
             no_think_rl=self.config.algorithm.no_think_rl,
             search_url = self.config.retriever.url,
             topk = self.config.retriever.topk,
-            use_toolbench=getattr(self.config, 'use_toolbench', False),
             toolbench_url=getattr(self.config, 'toolbench_url', None),
         )
 
@@ -691,7 +690,6 @@ class RayPPOTrainer(object):
             no_think_rl=self.config.algorithm.no_think_rl,
             search_url = self.config.retriever.url,
             topk = self.config.retriever.topk,
-            use_toolbench=getattr(self.config, 'use_toolbench', False),
             toolbench_url=getattr(self.config, 'toolbench_url', None),
         )
 

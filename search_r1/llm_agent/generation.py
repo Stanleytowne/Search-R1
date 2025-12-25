@@ -46,7 +46,6 @@ class GenerationConfig:
     search_url: str = None
     topk: int = 3
     # ToolBench related configs
-    use_toolbench: bool = False
     toolbench_url: str = None
     toolbench_max_concurrent: int = 20  # 限制同时并发的 API 请求数量，防止内存 OOM
 
