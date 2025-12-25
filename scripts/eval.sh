@@ -2,7 +2,7 @@
 set -e
 
 export WANDB_API_KEY=
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0
 export TOKENIZERS_PARALLELISM=true
 export NCCL_DEBUG=WARN
 export VLLM_ATTENTION_BACKEND=XFORMERS
@@ -46,4 +46,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     +trainer.val_before_train=true \
-    +trainer.val_only=true
+    +trainer.val_only=true \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+    actor_rollout_ref.rollout.max_num_batched_tokens=16384
