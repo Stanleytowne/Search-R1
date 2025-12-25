@@ -2,7 +2,7 @@
 set -e
 
 export WANDB_API_KEY=
-export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 export TOKENIZERS_PARALLELISM=true
 export NCCL_DEBUG=WARN
 export VLLM_ATTENTION_BACKEND=XFORMERS
@@ -38,7 +38,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     actor_rollout_ref.model.enable_gradient_checkpointing=true \
     actor_rollout_ref.model.use_remove_padding=True \
     toolbench_url="$TOOLBENCH_URL" \
-    use_toolbench=true \
     reward_model.reward_server_url="$REWARD_SERVER_URL" \
     algorithm.adv_estimator=grpo \
     reward_model.pass_reward_weight="$PASS_REWARD_WEIGHT" \
@@ -46,6 +45,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     +trainer.val_before_train=true \
-    +trainer.val_only=true \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-    actor_rollout_ref.rollout.max_num_batched_tokens=16384
+    +trainer.val_only=true
+
+echo ""
+echo "Training completed!"
