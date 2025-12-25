@@ -383,7 +383,7 @@ class ToolBenchRewardManager:
         """
         finish_called = meta_info.get('finish_called', {})
         if sample_idx in finish_called and finish_called[sample_idx] is not None:
-            return finish_called[sample_idx]
+            return int(finish_called[sample_idx])
         
         return 0.0
 

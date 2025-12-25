@@ -619,20 +619,17 @@ class LLMGenerationManager:
                 dones.append(1)
                 valid_action.append(0)
             elif action == 'Finish':
+                # Use original batch index
+                original_idx = original_indices[i] if i < len(original_indices) else i
                 if isinstance(content_dict, dict) and 'final_answer' in content_dict:
                     # Track Finish call for reward computation
-                    # Use original batch index
-                    original_idx = original_indices[i] if i < len(original_indices) else i
                     self.finish_call_history[original_idx] = True
-                    next_obs.append('')
-                    dones.append(1)
-                    valid_action.append(1)
                 else:
                     # Finish call is invalid
                     self.finish_call_history[original_idx] = False
-                    next_obs.append('')
-                    dones.append(1)
-                    valid_action.append(1)
+                next_obs.append('')
+                dones.append(1)
+                valid_action.append(1)
             elif action and i in api_results:
                 # API call succeeded
                 result = api_results[i]
