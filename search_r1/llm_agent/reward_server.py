@@ -10,19 +10,24 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 JUDGE_PROMPT = """Giving the query and the corresponding execution trajectory (including thoughts, tool calls, and observations), evaluate the `answer_status` based on these rules:
 
-1. **Solved**: The tool calls were successful, and the final answer completely and accurately addresses all parts of the user's query.
-2. **Partially Solved**: The model made progress and successfully called some tools, but the final answer is incomplete, only addresses part of the query, or contains minor inaccuracies.
-3. **Unsolved**: The tool calls failed (errors), the model gave up, or the final answer is clearly incorrect, hallucinated, or irrelevant to the tool observations.
+1. **Solved**: The tool calls were successful. The final answer is strictly grounded in the real "Observation" data and fully addresses the query.
+2. **Partially Solved**: The model used real "Observation" data, but the task is only halfway finished or the final answer missed some details from the observations.
+3. **Unsolved**: 
+    - The model fabricated information not found in the Observations.
+    - The tool calls failed, and the model failed to solve the query or made up a result.
+    - The answer is incorrect or irrelevant.
 
 Output a JSON object with the following fields:
 - "reason": A very brief explanation (less than 20 words).
 - "answer_status": One of ["Solved", "Partially Solved", "Unsolved"].
 
-Query:
+<Target_Query>
 {query}
+</Target_Query>
 
-Answer Trajectory:
+<Model_Execution_Trajectory>
 {trajectory}
+</Model_Execution_Trajectory>
 """
 
 # 设置日志，方便排查哪个环节慢

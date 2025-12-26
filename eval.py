@@ -141,6 +141,7 @@ def evaluate_model_performance(
     model_path: str,
     test_data_path: str,
     output_name: str,
+    num_runs: int,
     toolbench_url: str,
     reward_server_url: str = "http://localhost:8000/evaluate_batch",
     batch_size: int = 4,
@@ -159,6 +160,7 @@ def evaluate_model_performance(
         model_path: Model path
         test_data_path: Test data path
         output_name: Output file name
+        num_runs: Number of runs
         toolbench_url: ToolBench API server URL
         reward_server_url: Reward server URL
         batch_size: Batch size
@@ -223,6 +225,7 @@ def evaluate_model_performance(
     
     # 7. Load test data
     test_data = load_test_data(test_data_path)
+    test_data = test_data * num_runs # repeat the data for num_runs times
     
     # 8. Evaluate
     all_results = []
@@ -335,6 +338,7 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Model path")
     parser.add_argument("--output_name", type=str, default="test_results.json", help="Output file name")
     parser.add_argument("--category", type=str, default='Email', help="Category")
+    parser.add_argument("--num_runs", type=int, default=1, help="Number of runs")
     parser.add_argument("--toolbench_url", type=str, default='http://127.0.0.1:12345', help="ToolBench API server URL")
     parser.add_argument("--reward_server_url", type=str, default="http://localhost:12346/evaluate_batch", 
                        help="Reward server URL")
@@ -354,6 +358,7 @@ def main():
         model_path=args.model_path,
         test_data_path=f'data/toolbench_test/{args.category}.parquet',
         output_name=args.output_name,
+        num_runs=args.num_runs,
         toolbench_url=args.toolbench_url,
         reward_server_url=args.reward_server_url,
         batch_size=args.batch_size,
