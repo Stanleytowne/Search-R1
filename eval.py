@@ -1,42 +1,29 @@
 #!/usr/bin/env python
 import argparse
+import os
 import torch
 import pandas as pd
 import json
-import logging
-import sys
-from typing import List, Dict, Any
-from pathlib import Path
+from typing import List, Dict
 from tqdm import tqdm
 
-from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from verl import DataProto
 from verl.utils.model import compute_position_id_with_mask
 
-from search_r1.llm_agent.generation import LLMGenerationManager, GenerationConfig, normalize_api_name
+from search_r1.llm_agent.generation import LLMGenerationManager, GenerationConfig
 from search_r1.llm_agent.toolbench_reward import ToolBenchRewardManager
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
 
 
 class SimpleActorRolloutWrapper:
     """Simple Actor Rollout wrapper for simulating generate_sequences method"""
     
-    def __init__(self, llm, tokenizer, max_new_tokens=512, temperature=0.7):
+    def __init__(self, llm, tokenizer, max_new_tokens=512, temperature=0.7, top_p=0.95):
         self.llm = llm
         self.tokenizer = tokenizer
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
-        logger.info(f"Initialized SimpleActorRolloutWrapper: max_new_tokens={max_new_tokens}, temperature={temperature}")
+        self.top_p = top_p
     
     def generate_sequences(self, data: DataProto) -> DataProto:
         """
@@ -48,11 +35,9 @@ class SimpleActorRolloutWrapper:
         Returns:
             DataProto containing generated responses
         """
-        logger.debug("Starting generate_sequences")
         input_ids = data.batch['input_ids']
         
         batch_size = input_ids.shape[0]
-        logger.debug(f"Processing batch size: {batch_size}, input_ids shape: {input_ids.shape}")
         
         # Convert input_ids to prompt strings
         # Remove left padding first
@@ -65,28 +50,24 @@ class SimpleActorRolloutWrapper:
             if non_pad_mask.any():
                 first_non_pad = non_pad_mask.nonzero(as_tuple=False)[0][0].item()
                 token_ids = input_ids[i][first_non_pad:].tolist()
-                logger.debug(f"Sample {i}: removed {first_non_pad} padding tokens, remaining length: {len(token_ids)}")
             else:
                 token_ids = input_ids[i].tolist()
-                logger.debug(f"Sample {i}: no padding found, length: {len(token_ids)}")
             prompt_token_ids_list.append(token_ids)
         
         # Create sampling params
         sampling_params = SamplingParams(
             temperature=self.temperature if self.temperature > 0 else 0.0,
+            top_p=self.top_p if self.top_p > 0 else 0.0,
             max_tokens=self.max_new_tokens,
             stop_token_ids=[self.tokenizer.eos_token_id] if self.tokenizer.eos_token_id is not None else None,
         )
-        logger.debug(f"Sampling params: temperature={sampling_params.temperature}, max_tokens={sampling_params.max_tokens}")
         
         # Generate using vLLM
-        logger.info(f"Calling vLLM generate for {batch_size} samples")
         outputs = self.llm.generate(
             prompt_token_ids=prompt_token_ids_list,
             sampling_params=sampling_params,
             use_tqdm=False
         )
-        logger.info(f"vLLM generate completed, received {len(outputs)} outputs")
         
         # Extract generated token ids
         generated_ids_list = []
@@ -95,12 +76,10 @@ class SimpleActorRolloutWrapper:
             # Convert to list
             generated_token_ids = list(generated_token_ids)
             generated_ids_list.append(generated_token_ids)
-            logger.debug(f"Output {idx}: generated {len(generated_token_ids)} tokens")
         
         # Pad to same length and convert to tensor
         max_len = max(len(ids) for ids in generated_ids_list)
         pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-        logger.debug(f"Max generated length: {max_len}, padding to max_new_tokens: {self.max_new_tokens}")
         
         generated_ids = []
         for ids in generated_ids_list:
@@ -108,7 +87,6 @@ class SimpleActorRolloutWrapper:
             generated_ids.append(padded[:self.max_new_tokens])  # Truncate if too long
         
         generated_ids_tensor = torch.tensor(generated_ids, dtype=torch.long)
-        logger.debug(f"Generated tensor shape: {generated_ids_tensor.shape}")
         
         # Create response DataProto
         response_data = DataProto.from_dict({
@@ -118,9 +96,7 @@ class SimpleActorRolloutWrapper:
         # Preserve meta_info if exists
         if hasattr(data, 'meta_info'):
             response_data.meta_info = data.meta_info.copy()
-            logger.debug("Preserved meta_info from input data")
         
-        logger.info(f"Successfully generated sequences, response shape: {generated_ids_tensor.shape}")
         return response_data
 
 
@@ -173,17 +149,14 @@ def create_prompt_from_data(data_item: Dict, tokenizer) -> str:
 def evaluate_model_performance(
     model_path: str,
     test_data_path: str,
+    output_name: str,
     toolbench_url: str,
     reward_server_url: str = "http://localhost:8000/evaluate_batch",
-    max_samples: int = None,
     batch_size: int = 4,
     max_turns: int = 5,
     max_new_tokens: int = 512,
     temperature: float = 0.7,
-    format_reward_weight: float = 0.1,
-    function_call_reward_weight: float = 0.2,
-    finish_reward_weight: float = 0.3,
-    pass_reward_weight: float = 0.1,
+    top_p: float = 0.95,
     num_gpus: int = 1,
     tensor_parallel_size: int = 1,
     gpu_memory_utilization: float = 0.9,
@@ -194,32 +167,18 @@ def evaluate_model_performance(
     Args:
         model_path: Model path
         test_data_path: Test data path
+        output_name: Output file name
         toolbench_url: ToolBench API server URL
         reward_server_url: Reward server URL
-        max_samples: Maximum number of test samples
         batch_size: Batch size
         max_turns: Maximum number of turns
         max_new_tokens: Maximum tokens per generation
         temperature: Generation temperature
-        format_reward_weight: Format reward weight
-        function_call_reward_weight: Function call reward weight
-        finish_reward_weight: Finish reward weight
-        pass_reward_weight: Pass reward weight
+        top_p: Top-p for generation
         num_gpus: Number of GPUs
         tensor_parallel_size: Tensor parallel size for vLLM
         gpu_memory_utilization: GPU memory utilization for vLLM
     """
-    print("=" * 80)
-    print("ToolBench Model Performance Test")
-    print("=" * 80)
-    print(f"Model path: {model_path}")
-    print(f"Test data: {test_data_path}")
-    print(f"ToolBench URL: {toolbench_url}")
-    print(f"Reward Server URL: {reward_server_url}")
-    print(f"Max samples: {max_samples if max_samples else 'All'}")
-    print(f"Batch size: {batch_size}")
-    print(f"Max turns: {max_turns}")
-    print("=" * 80)
     
     # 2. Load model with vLLM
     llm = LLM(
@@ -235,7 +194,8 @@ def evaluate_model_performance(
         llm=llm,
         tokenizer=tokenizer,
         max_new_tokens=max_new_tokens,
-        temperature=temperature
+        temperature=temperature,
+        top_p=top_p,
     )
     
     # 4. Create GenerationConfig
@@ -261,16 +221,16 @@ def evaluate_model_performance(
     # 6. Create RewardManager
     reward_manager = ToolBenchRewardManager(
         tokenizer=tokenizer,
-        format_reward_weight=format_reward_weight,
-        function_call_reward_weight=function_call_reward_weight,
-        finish_reward_weight=finish_reward_weight,
-        pass_reward_weight=pass_reward_weight,
-        num_examine=3,  # Print detailed info for first 3 samples
+        format_reward_weight=0,
+        function_call_reward_weight=0,
+        finish_reward_weight=0,
+        pass_reward_weight=1,
+        num_examine=0,
         reward_server_url=reward_server_url,
     )
     
     # 7. Load test data
-    test_data = load_test_data(test_data_path, max_samples=max_samples)
+    test_data = load_test_data(test_data_path)
     
     # 8. Evaluate
     all_results = []
@@ -367,7 +327,7 @@ def evaluate_model_performance(
     print("=" * 80)
     
     # Save detailed results
-    output_file = "test_results.json"
+    output_file = os.path.join(model_path, output_name)
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
     print(f"\nDetailed results saved to: {output_file}")
@@ -377,43 +337,34 @@ def main():
     parser = argparse.ArgumentParser(description="ToolBench Model Performance Test")
     
     parser.add_argument("--model_path", type=str, required=True, help="Model path")
+    parser.add_argument("--output_name", type=str, default="test_results.json", help="Output file name")
     parser.add_argument("--category", type=str, default='Email', help="Category")
     parser.add_argument("--toolbench_url", type=str, default='http://127.0.0.1:12345', help="ToolBench API server URL")
-    parser.add_argument("--output_file", type=str, default="test_results.json", help="Output file path")
     parser.add_argument("--reward_server_url", type=str, default="http://localhost:8000/evaluate_batch", 
                        help="Reward server URL")
     
-    parser.add_argument("--max_samples", type=int, default=None, help="Maximum number of test samples")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--max_turns", type=int, default=5, help="Maximum number of turns")
     parser.add_argument("--max_new_tokens", type=int, default=1024, help="Maximum tokens per generation")
-    parser.add_argument("--temperature", type=float, default=0.95, help="Generation temperature")
-    parser.add_argument("--pass_reward_weight", type=float, default=1, help="Pass reward weight")
+    parser.add_argument("--temperature", type=float, default=1., help="Generation temperature")
+    parser.add_argument("--top_p", type=float, default=0.95, help="Top-p for generation")
     parser.add_argument("--num_gpus", type=int, default=1, help="Number of GPUs")
     parser.add_argument("--tensor_parallel_size", type=int, default=1, help="Tensor parallel size for vLLM")
     parser.add_argument("--gpu_memory_utilization", type=float, default=0.9, help="GPU memory utilization for vLLM")
-    parser.add_argument("--log_level", type=str, default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                       help="Logging level")
     
     args = parser.parse_args()
-    
-    # Set logging level
-    logger.setLevel(getattr(logging, args.log_level))
     
     evaluate_model_performance(
         model_path=args.model_path,
         test_data_path=f'data/toolbench_test/{args.category}.parquet',
+        output_name=args.output_name,
         toolbench_url=args.toolbench_url,
         reward_server_url=args.reward_server_url,
-        max_samples=args.max_samples,
         batch_size=args.batch_size,
         max_turns=args.max_turns,
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
-        format_reward_weight=0,
-        function_call_reward_weight=0,
-        finish_reward_weight=0,
-        pass_reward_weight=args.pass_reward_weight,
+        top_p=args.top_p,
         num_gpus=args.num_gpus,
         tensor_parallel_size=args.tensor_parallel_size,
         gpu_memory_utilization=args.gpu_memory_utilization,
