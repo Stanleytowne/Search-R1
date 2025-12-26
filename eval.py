@@ -279,7 +279,8 @@ def evaluate_model_performance(
         final_output.non_tensor_batch['data_source'] = batch_data[0].get('data_source', 'toolbench')
 
         if final_output.batch['responses'].dtype != torch.int64:
-            breakpoint()
+            print("WARNING: responses dtype is not int64")
+            final_output.batch['responses'] = final_output.batch['responses'].to(torch.int64)
         
         # Calculate rewards
         rewards = reward_manager(final_output)
