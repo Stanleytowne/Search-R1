@@ -93,6 +93,12 @@ class SimpleActorRolloutWrapper:
         generated_ids_list = []
         for idx, output in enumerate(outputs):
             generated_token_ids = output.outputs[0].token_ids
+            # Convert to list if it's a tuple or other iterable
+            if isinstance(generated_token_ids, (tuple, list)):
+                generated_token_ids = list(generated_token_ids)
+            else:
+                # If it's already a tensor or other type, convert to list
+                generated_token_ids = generated_token_ids.tolist() if hasattr(generated_token_ids, 'tolist') else list(generated_token_ids)
             generated_ids_list.append(generated_token_ids)
             logger.debug(f"Output {idx}: generated {len(generated_token_ids)} tokens")
         
@@ -103,6 +109,9 @@ class SimpleActorRolloutWrapper:
         
         generated_ids = []
         for ids in generated_ids_list:
+            # Ensure ids is a list
+            if not isinstance(ids, list):
+                ids = list(ids)
             padded = ids + [pad_token_id] * (max_len - len(ids))
             generated_ids.append(padded[:self.max_new_tokens])  # Truncate if too long
         
@@ -457,7 +466,7 @@ def main():
     parser = argparse.ArgumentParser(description="ToolBench Model Performance Test")
     
     parser.add_argument("--model_path", type=str, required=True, help="Model path")
-    parser.add_argument("--test_data_path", type=str, default='data/toolbench_test/Email.parquet', help="Test data path (parquet format)")
+    parser.add_argument("--category", type=str, default='Email', help="Category")
     parser.add_argument("--toolbench_url", type=str, default='http://127.0.0.1:12345', help="ToolBench API server URL")
     parser.add_argument("--output_file", type=str, default="test_results.json", help="Output file path")
     parser.add_argument("--reward_server_url", type=str, default="http://localhost:8000/evaluate_batch", 
@@ -486,7 +495,7 @@ def main():
     
     evaluate_model_performance(
         model_path=args.model_path,
-        test_data_path=args.test_data_path,
+        test_data_path=f'data/toolbench_test/{args.category}.parquet',
         toolbench_url=args.toolbench_url,
         reward_server_url=args.reward_server_url,
         max_samples=args.max_samples,
