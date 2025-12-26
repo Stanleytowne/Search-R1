@@ -264,7 +264,6 @@ def evaluate_model_performance(
         max_response_length=1024,
         max_obs_length=2000,
         num_gpus=num_gpus,
-        use_toolbench=True,
         toolbench_url=toolbench_url,
         toolbench_max_concurrent=20,
     )
