@@ -36,6 +36,8 @@ class SimpleActorRolloutWrapper:
             DataProto containing generated responses
         """
         input_ids = data.batch['input_ids']
+        if input_ids.dtype != torch.int64:
+            input_ids = input_ids.to(torch.int64)
         
         batch_size = input_ids.shape[0]
         

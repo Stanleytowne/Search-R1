@@ -609,8 +609,6 @@ class LLMGenerationManager:
         api_results = {}
         if api_calls:
             api_results = self.batch_call_toolbench_apis(api_calls)
-        elif not api_calls:
-            print(f"[DEBUG] No API calls to make (api_calls is empty)")
         
         # Process results
         for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
