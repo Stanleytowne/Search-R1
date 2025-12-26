@@ -28,7 +28,7 @@ for folder, pattern in folders_config:
             if file_path.endswith('.json'):
                 with open(file_path, 'r') as f:
                     data = json.load(f)
-                row_count = len(data) if isinstance(data, list) else 1
+                row_count = len(data) if isinstance(data, list) else len(list(data.keys()))
             elif file_path.endswith('.parquet'):
                 df = pd.read_parquet(file_path)
                 row_count = len(df)
