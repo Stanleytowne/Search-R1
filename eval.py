@@ -86,7 +86,7 @@ class SimpleActorRolloutWrapper:
             padded = ids + [pad_token_id] * (max_len - len(ids))
             generated_ids.append(padded[:self.max_new_tokens])  # Truncate if too long
         
-        generated_ids_tensor = torch.tensor(generated_ids, dtype=torch.long)
+        generated_ids_tensor = torch.tensor(generated_ids, dtype=torch.int64)
         
         # Create response DataProto
         response_data = DataProto.from_dict({
@@ -177,6 +177,7 @@ def evaluate_model_performance(
         tensor_parallel_size=tensor_parallel_size,
         gpu_memory_utilization=gpu_memory_utilization,
         trust_remote_code=True,
+        dtype=torch.bfloat16,
     )
     tokenizer = llm.get_tokenizer()
     
