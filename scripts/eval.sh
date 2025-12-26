@@ -26,7 +26,7 @@ EXPERIMENT_NAME=${CATEGORY}
 
 PASS_REWARD_WEIGHT=1
 
-VAL_BATCH_SIZE=4
+VAL_BATCH_SIZE=2
 
 # 运行训练
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
@@ -46,6 +46,3 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     +trainer.val_before_train=true \
     +trainer.val_only=true
-
-echo ""
-echo "Training completed!"
