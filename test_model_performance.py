@@ -144,16 +144,12 @@ def load_test_data(data_path: str, max_samples: int = None) -> List[Dict]:
     # Convert to list format
     data_list = []
     for idx, row in df.iterrows():
-        try:
-            data_item = {
-                'prompt': row['prompt'] if isinstance(row['prompt'], list) else json.loads(row['prompt']),
-                'data_source': row.get('data_source', 'toolbench'),
-                'extra_info': row.get('extra_info', {}) if isinstance(row.get('extra_info', {}), dict) else json.loads(row.get('extra_info', '{}')),
-            }
-            data_list.append(data_item)
-        except Exception as e:
-            logger.warning(f"Error processing row {idx}: {e}, skipping")
-            continue
+        data_item = {
+            'prompt': row['prompt'].tolist(),
+            'data_source': row['data_source'],
+            'extra_info': row.get('extra_info', {}),
+        }
+        data_list.append(data_item)
     
     logger.info(f"Successfully loaded {len(data_list)} test samples")
     return data_list
