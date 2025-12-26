@@ -50,7 +50,6 @@ class SimpleActorRolloutWrapper:
         """
         logger.debug("Starting generate_sequences")
         input_ids = data.batch['input_ids']
-        attention_mask = data.batch.get('attention_mask', torch.ones_like(input_ids))
         
         batch_size = input_ids.shape[0]
         logger.debug(f"Processing batch size: {batch_size}, input_ids shape: {input_ids.shape}")
@@ -103,15 +102,12 @@ class SimpleActorRolloutWrapper:
             logger.debug(f"Output {idx}: generated {len(generated_token_ids)} tokens")
         
         # Pad to same length and convert to tensor
-        max_len = max(len(ids) for ids in generated_ids_list) if generated_ids_list else self.max_new_tokens
+        max_len = max(len(ids) for ids in generated_ids_list)
         pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
         logger.debug(f"Max generated length: {max_len}, padding to max_new_tokens: {self.max_new_tokens}")
         
         generated_ids = []
         for ids in generated_ids_list:
-            # Ensure ids is a list
-            if not isinstance(ids, list):
-                ids = list(ids)
             padded = ids + [pad_token_id] * (max_len - len(ids))
             generated_ids.append(padded[:self.max_new_tokens])  # Truncate if too long
         
@@ -321,94 +317,87 @@ def evaluate_model_performance(
         batch_data = test_data[start_idx:end_idx]
         logger.info(f"Processing batch {batch_idx + 1}/{num_batches}: samples {start_idx} to {end_idx - 1}")
         
-        try:
-            # Prepare batch data
-            logger.debug(f"Preparing batch data for {len(batch_data)} samples")
-            batch_prompts = []
-            batch_extra_info = []
+        # Prepare batch data
+        logger.debug(f"Preparing batch data for {len(batch_data)} samples")
+        batch_prompts = []
+        batch_extra_info = []
+        
+        for data_item in batch_data:
+            prompt_str = create_prompt_from_data(data_item, tokenizer)
+            batch_prompts.append(prompt_str)
+            batch_extra_info.append(data_item.get('extra_info', {}))
+        
+        logger.debug(f"Created {len(batch_prompts)} prompts")
+        
+        # Tokenize prompts
+        logger.debug("Tokenizing prompts")
+        tokenizer.padding_side = 'left'
+        encoded = tokenizer(
+            batch_prompts,
+            return_tensors='pt',
+            padding=True,
+            truncation=True,
+            max_length=config.max_start_length,
+        )
+        
+        input_ids = encoded['input_ids']
+        attention_mask = encoded['attention_mask']
+        logger.debug(f"Tokenized: input_ids shape={input_ids.shape}, attention_mask shape={attention_mask.shape}")
+        
+        # Create position_ids from attention_mask
+        position_ids = compute_position_id_with_mask(attention_mask)
+        logger.debug(f"Created position_ids: shape={position_ids.shape}")
+        
+        # Create initial DataProto
+        logger.debug("Creating initial DataProto")
+        initial_input_ids = input_ids
+        gen_batch = DataProto.from_dict({
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'position_ids': position_ids,
+        })
+        gen_batch.non_tensor_batch = {
+            'extra_info': batch_extra_info,
+            'data_source': batch_data[0].get('data_source', 'toolbench'),
+        }
+        logger.debug(f"DataProto created: input_ids shape={input_ids.shape}, position_ids shape={position_ids.shape}")
+        
+        # Run generation loop
+        logger.info(f"Running generation loop for batch {batch_idx + 1}")
+        final_output = generation_manager.run_llm_loop(gen_batch, initial_input_ids)
+        logger.info(f"Generation loop completed for batch {batch_idx + 1}")
+        breakpoint()
+        
+        # Calculate rewards
+        logger.debug("Calculating rewards")
+        rewards = reward_manager(final_output)
+        logger.debug(f"Rewards calculated: shape={[r.shape for r in rewards] if isinstance(rewards, list) else rewards.shape}")
+        
+        # Collect results
+        logger.debug("Collecting results")
+        for i in range(len(batch_data)):
+            sample_idx = start_idx + i
+            reward_value = rewards[i].max().item() if rewards[i].numel() > 0 else 0.0
             
-            for data_item in batch_data:
-                prompt_str = create_prompt_from_data(data_item, tokenizer)
-                batch_prompts.append(prompt_str)
-                batch_extra_info.append(data_item.get('extra_info', {}))
-            
-            logger.debug(f"Created {len(batch_prompts)} prompts")
-            
-            # Tokenize prompts
-            logger.debug("Tokenizing prompts")
-            tokenizer.padding_side = 'left'
-            encoded = tokenizer(
-                batch_prompts,
-                return_tensors='pt',
-                padding=True,
-                truncation=True,
-                max_length=config.max_start_length,
-            )
-            
-            input_ids = encoded['input_ids']
-            attention_mask = encoded['attention_mask']
-            logger.debug(f"Tokenized: input_ids shape={input_ids.shape}, attention_mask shape={attention_mask.shape}")
-            
-            # Create position_ids from attention_mask
-            position_ids = compute_position_id_with_mask(attention_mask)
-            logger.debug(f"Created position_ids: shape={position_ids.shape}")
-            
-            # Create initial DataProto
-            logger.debug("Creating initial DataProto")
-            initial_input_ids = input_ids
-            gen_batch = DataProto.from_dict({
-                'input_ids': input_ids,
-                'attention_mask': attention_mask,
-                'position_ids': position_ids,
-            })
-            gen_batch.non_tensor_batch = {
-                'extra_info': batch_extra_info,
-                'data_source': batch_data[0].get('data_source', 'toolbench'),
+            # Get reward components (simplified, need to get from reward_manager internals)
+            result = {
+                'sample_idx': sample_idx,
+                'total_reward': reward_value,
+                'query': batch_prompts[i][:200] + '...' if len(batch_prompts[i]) > 200 else batch_prompts[i],
             }
-            logger.debug(f"DataProto created: input_ids shape={input_ids.shape}, position_ids shape={position_ids.shape}")
             
-            # Run generation loop
-            logger.info(f"Running generation loop for batch {batch_idx + 1}")
-            final_output = generation_manager.run_llm_loop(gen_batch, initial_input_ids)
-            logger.info(f"Generation loop completed for batch {batch_idx + 1}")
+            # Get statistics from meta_info
+            if hasattr(final_output, 'meta_info'):
+                meta = final_output.meta_info
+                result['turns'] = meta.get('turns_stats', [0])[i] if i < len(meta.get('turns_stats', [])) else 0
+                result['valid_actions'] = meta.get('valid_action_stats', [0])[i] if i < len(meta.get('valid_action_stats', [])) else 0
+                result['finish_called'] = meta.get('finish_called', {}).get(i, None)
             
-            # Calculate rewards
-            logger.debug("Calculating rewards")
-            rewards = reward_manager(final_output)
-            logger.debug(f"Rewards calculated: shape={[r.shape for r in rewards] if isinstance(rewards, list) else rewards.shape}")
-            
-            # Collect results
-            logger.debug("Collecting results")
-            for i in range(len(batch_data)):
-                sample_idx = start_idx + i
-                reward_value = rewards[i].max().item() if rewards[i].numel() > 0 else 0.0
-                
-                # Get reward components (simplified, need to get from reward_manager internals)
-                result = {
-                    'sample_idx': sample_idx,
-                    'total_reward': reward_value,
-                    'query': batch_prompts[i][:200] + '...' if len(batch_prompts[i]) > 200 else batch_prompts[i],
-                }
-                
-                # Get statistics from meta_info
-                if hasattr(final_output, 'meta_info'):
-                    meta = final_output.meta_info
-                    result['turns'] = meta.get('turns_stats', [0])[i] if i < len(meta.get('turns_stats', [])) else 0
-                    result['valid_actions'] = meta.get('valid_action_stats', [0])[i] if i < len(meta.get('valid_action_stats', [])) else 0
-                    result['finish_called'] = meta.get('finish_called', {}).get(i, None)
-                
-                all_results.append(result)
-                logger.debug(f"Sample {sample_idx}: reward={reward_value:.4f}, turns={result.get('turns', 0)}, "
-                            f"valid_actions={result.get('valid_actions', 0)}, finish_called={result.get('finish_called')}")
-            
-            logger.info(f"Batch {batch_idx + 1} completed successfully, collected {len(batch_data)} results")
-                
-        except Exception as e:
-            logger.error(f"Batch {batch_idx} processing failed: {e}", exc_info=True)
-            print(f"\n[Error] Batch {batch_idx} processing failed: {e}")
-            import traceback
-            traceback.print_exc()
-            continue
+            all_results.append(result)
+            logger.debug(f"Sample {sample_idx}: reward={reward_value:.4f}, turns={result.get('turns', 0)}, "
+                        f"valid_actions={result.get('valid_actions', 0)}, finish_called={result.get('finish_called')}")
+        
+        logger.info(f"Batch {batch_idx + 1} completed successfully, collected {len(batch_data)} results")
     
     # 9. Statistics
     print("\n" + "=" * 80)
