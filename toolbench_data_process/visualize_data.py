@@ -44,20 +44,35 @@ for folder, pattern in folders_config:
             continue
 
 # 按文件名分组统计并打印结果
-print("=" * 80)
-print("按文件名（不含扩展名）分组统计数据条目")
-print("=" * 80)
+# 收集所有路径（文件夹）
+all_folders = [folder for folder, _ in folders_config]
 
-for base_name in sorted(file_groups.keys()):
-    files_info = file_groups[base_name]
-    total_count = sum(f['count'] for f in files_info)
-    
-    print(f"\n文件名: {base_name}")
-    print(f"  总条目数: {total_count}")
-    print(f"  文件数量: {len(files_info)}")
+# 构建表格数据：每个文件名在各个路径下的条目数
+table_data = {}
+for base_name, files_info in file_groups.items():
+    table_data[base_name] = {}
+    # 初始化所有路径的计数为0
+    for folder in all_folders:
+        table_data[base_name][folder] = 0
+    # 统计每个路径下的条目数
     for file_info in files_info:
-        print(f"    - {file_info['path']}: {file_info['count']} 条")
+        file_path = file_info['path']
+        count = file_info['count']
+        # 找到文件所属的路径
+        for folder in all_folders:
+            if file_path.startswith(folder):
+                table_data[base_name][folder] += count
+                break
 
-print("\n" + "=" * 80)
-print(f"总计: {len(file_groups)} 个不同的文件名组")
-print("=" * 80)
+# 生成表格
+print("# 按文件名（不含扩展名）分组统计数据条目\n")
+print("| 文件名 | " + " | ".join(all_folders) + " | 总计 |")
+print("|--------|" + "|".join(["--------" for _ in all_folders]) + "|--------|")
+
+for base_name in sorted(table_data.keys()):
+    row_data = table_data[base_name]
+    folder_counts = [str(row_data[folder]) for folder in all_folders]
+    total = sum(row_data.values())
+    print(f"| {base_name} | " + " | ".join(folder_counts) + f" | {total} |")
+
+print(f"\n**总计**: {len(table_data)} 个不同的文件名组")
