@@ -277,6 +277,9 @@ def evaluate_model_performance(
         # Run generation loop
         final_output = generation_manager.run_llm_loop(gen_batch, initial_input_ids)
         final_output.non_tensor_batch['data_source'] = batch_data[0].get('data_source', 'toolbench')
+
+        if final_output.batch['responses'].dtype != torch.int64:
+            breakpoint()
         
         # Calculate rewards
         rewards = reward_manager(final_output)
@@ -332,7 +335,7 @@ def main():
     parser.add_argument("--output_name", type=str, default="test_results.json", help="Output file name")
     parser.add_argument("--category", type=str, default='Email', help="Category")
     parser.add_argument("--toolbench_url", type=str, default='http://127.0.0.1:12345', help="ToolBench API server URL")
-    parser.add_argument("--reward_server_url", type=str, default="http://localhost:8000/evaluate_batch", 
+    parser.add_argument("--reward_server_url", type=str, default="http://localhost:12346/evaluate_batch", 
                        help="Reward server URL")
     
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size")

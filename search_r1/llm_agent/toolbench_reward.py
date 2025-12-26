@@ -96,7 +96,7 @@ class ToolBenchRewardManager:
             valid_info_list.append(valid_response_length)
 
             # debug output
-            if i == 0:
+            if i < self.num_examine:
                 print("#" * 30)
                 print("[DEBUG REWARD] PROMPT (valid tokens only):")
                 if valid_prompt_length > 0:
@@ -120,15 +120,16 @@ class ToolBenchRewardManager:
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
-            response_str = all_trajectories[i]
-
-            print(f"\n[Eval Reward Sample {i}]")
-            print(f"  Response: {response_str[:200]}...")
-            print(f"  Pass reward: {pass_rewards[i]:.3f}")
             for i in range(batch_size):
                 valid_response_length = valid_info_list[i]
                 if valid_response_length > 0:
                     reward_tensor[i, valid_response_length - 1] = pass_rewards[i]
+                
+                if i < self.num_examine:
+                    response_str = all_trajectories[i]
+                    print(f"\n[Eval Reward Sample {i}]")
+                    print(f"  Response: {response_str[:200]}...")
+                    print(f"  Pass reward: {pass_rewards[i]:.3f}")
             return reward_tensor
 
         # 获取每个样本的信息
