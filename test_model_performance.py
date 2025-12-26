@@ -92,12 +92,8 @@ class SimpleActorRolloutWrapper:
         generated_ids_list = []
         for idx, output in enumerate(outputs):
             generated_token_ids = output.outputs[0].token_ids
-            # Convert to list if it's a tuple or other iterable
-            if isinstance(generated_token_ids, (tuple, list)):
-                generated_token_ids = list(generated_token_ids)
-            else:
-                # If it's already a tensor or other type, convert to list
-                generated_token_ids = generated_token_ids.tolist() if hasattr(generated_token_ids, 'tolist') else list(generated_token_ids)
+            # Convert to list
+            generated_token_ids = list(generated_token_ids)
             generated_ids_list.append(generated_token_ids)
             logger.debug(f"Output {idx}: generated {len(generated_token_ids)} tokens")
         
@@ -225,40 +221,24 @@ def evaluate_model_performance(
     print(f"Max turns: {max_turns}")
     print("=" * 80)
     
-    # 1. Load tokenizer
-    print("\n[1/6] Loading tokenizer...")
-    logger.info(f"[Step 1/6] Loading tokenizer from: {model_path}")
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-        logger.info("Set pad_token to eos_token")
-    logger.info(f"Tokenizer loaded: vocab_size={tokenizer.vocab_size}, pad_token_id={tokenizer.pad_token_id}, eos_token_id={tokenizer.eos_token_id}")
-    
     # 2. Load model with vLLM
-    print("\n[2/6] Loading model with vLLM...")
-    logger.info(f"[Step 2/6] Loading model with vLLM: tensor_parallel_size={tensor_parallel_size}, gpu_memory_utilization={gpu_memory_utilization}")
     llm = LLM(
         model=model_path,
         tensor_parallel_size=tensor_parallel_size,
         gpu_memory_utilization=gpu_memory_utilization,
         trust_remote_code=True,
     )
-    logger.info("vLLM model loaded successfully")
+    tokenizer = llm.get_tokenizer()
     
     # 3. Create ActorRolloutWrapper
-    print("\n[3/6] Creating generator...")
-    logger.info(f"[Step 3/6] Creating ActorRolloutWrapper: max_new_tokens={max_new_tokens}, temperature={temperature}")
     actor_rollout_wg = SimpleActorRolloutWrapper(
         llm=llm,
         tokenizer=tokenizer,
         max_new_tokens=max_new_tokens,
         temperature=temperature
     )
-    logger.info("ActorRolloutWrapper created successfully")
     
     # 4. Create GenerationConfig
-    print("\n[4/6] Creating generation config...")
-    logger.info(f"[Step 4/6] Creating GenerationConfig: max_turns={max_turns}, toolbench_url={toolbench_url}")
     config = GenerationConfig(
         max_turns=max_turns,
         max_start_length=7168,
@@ -269,22 +249,16 @@ def evaluate_model_performance(
         toolbench_url=toolbench_url,
         toolbench_max_concurrent=20,
     )
-    logger.info(f"GenerationConfig created: max_turns={config.max_turns}, max_start_length={config.max_start_length}")
     
     # 5. Create GenerationManager
-    logger.info(f"[Step 5/6] Creating LLMGenerationManager")
     generation_manager = LLMGenerationManager(
         tokenizer=tokenizer,
         actor_rollout_wg=actor_rollout_wg,
         config=config,
         is_validation=True
     )
-    logger.info("LLMGenerationManager created successfully")
     
     # 6. Create RewardManager
-    logger.info(f"[Step 6/6] Creating ToolBenchRewardManager")
-    logger.info(f"Reward weights: format={format_reward_weight}, function_call={function_call_reward_weight}, "
-                f"finish={finish_reward_weight}, pass={pass_reward_weight}")
     reward_manager = ToolBenchRewardManager(
         tokenizer=tokenizer,
         format_reward_weight=format_reward_weight,
@@ -294,31 +268,23 @@ def evaluate_model_performance(
         num_examine=3,  # Print detailed info for first 3 samples
         reward_server_url=reward_server_url,
     )
-    logger.info(f"ToolBenchRewardManager created, reward_server_url={reward_server_url}")
     
     # 7. Load test data
-    print("\n[5/6] Loading test data...")
-    logger.info(f"[Step 7] Loading test data from: {test_data_path}, max_samples={max_samples}")
     test_data = load_test_data(test_data_path, max_samples=max_samples)
-    print(f"Loaded {len(test_data)} test samples")
     
     # 8. Evaluate
-    print("\n[6/6] Starting evaluation...")
-    logger.info(f"[Step 8] Starting evaluation: batch_size={batch_size}, total_samples={len(test_data)}")
     all_results = []
+    all_responses = []
     
     # Process in batches
     num_batches = (len(test_data) + batch_size - 1) // batch_size
-    logger.info(f"Will process {num_batches} batches")
     
     for batch_idx in tqdm(range(num_batches), desc="Evaluation progress"):
         start_idx = batch_idx * batch_size
         end_idx = min(start_idx + batch_size, len(test_data))
         batch_data = test_data[start_idx:end_idx]
-        logger.info(f"Processing batch {batch_idx + 1}/{num_batches}: samples {start_idx} to {end_idx - 1}")
         
         # Prepare batch data
-        logger.debug(f"Preparing batch data for {len(batch_data)} samples")
         batch_prompts = []
         batch_extra_info = []
         
@@ -327,10 +293,7 @@ def evaluate_model_performance(
             batch_prompts.append(prompt_str)
             batch_extra_info.append(data_item.get('extra_info', {}))
         
-        logger.debug(f"Created {len(batch_prompts)} prompts")
-        
         # Tokenize prompts
-        logger.debug("Tokenizing prompts")
         tokenizer.padding_side = 'left'
         encoded = tokenizer(
             batch_prompts,
@@ -342,14 +305,11 @@ def evaluate_model_performance(
         
         input_ids = encoded['input_ids']
         attention_mask = encoded['attention_mask']
-        logger.debug(f"Tokenized: input_ids shape={input_ids.shape}, attention_mask shape={attention_mask.shape}")
         
         # Create position_ids from attention_mask
         position_ids = compute_position_id_with_mask(attention_mask)
-        logger.debug(f"Created position_ids: shape={position_ids.shape}")
         
         # Create initial DataProto
-        logger.debug("Creating initial DataProto")
         initial_input_ids = input_ids
         gen_batch = DataProto.from_dict({
             'input_ids': input_ids,
@@ -360,21 +320,16 @@ def evaluate_model_performance(
             'extra_info': batch_extra_info,
             'data_source': batch_data[0].get('data_source', 'toolbench'),
         }
-        logger.debug(f"DataProto created: input_ids shape={input_ids.shape}, position_ids shape={position_ids.shape}")
         
         # Run generation loop
-        logger.info(f"Running generation loop for batch {batch_idx + 1}")
         final_output = generation_manager.run_llm_loop(gen_batch, initial_input_ids)
-        logger.info(f"Generation loop completed for batch {batch_idx + 1}")
-        breakpoint()
+        final_output.non_tensor_batch['data_source'] = batch_data[0].get('data_source', 'toolbench')
         
         # Calculate rewards
-        logger.debug("Calculating rewards")
         rewards = reward_manager(final_output)
-        logger.debug(f"Rewards calculated: shape={[r.shape for r in rewards] if isinstance(rewards, list) else rewards.shape}")
+        breakpoint()
         
         # Collect results
-        logger.debug("Collecting results")
         for i in range(len(batch_data)):
             sample_idx = start_idx + i
             reward_value = rewards[i].max().item() if rewards[i].numel() > 0 else 0.0
@@ -394,30 +349,21 @@ def evaluate_model_performance(
                 result['finish_called'] = meta.get('finish_called', {}).get(i, None)
             
             all_results.append(result)
-            logger.debug(f"Sample {sample_idx}: reward={reward_value:.4f}, turns={result.get('turns', 0)}, "
-                        f"valid_actions={result.get('valid_actions', 0)}, finish_called={result.get('finish_called')}")
-        
-        logger.info(f"Batch {batch_idx + 1} completed successfully, collected {len(batch_data)} results")
     
     # 9. Statistics
     print("\n" + "=" * 80)
     print("Evaluation Results Statistics")
     print("=" * 80)
-    logger.info("=" * 80)
-    logger.info("Computing evaluation statistics")
     
     if not all_results:
-        logger.warning("No valid evaluation results!")
         print("No valid evaluation results!")
         return
     
-    logger.info(f"Total results collected: {len(all_results)}")
     total_rewards = [r['total_reward'] for r in all_results]
     avg_reward = sum(total_rewards) / len(total_rewards)
     max_reward = max(total_rewards)
     min_reward = min(total_rewards)
     
-    logger.info(f"Reward statistics: avg={avg_reward:.4f}, max={max_reward:.4f}, min={min_reward:.4f}")
     print(f"Total samples: {len(all_results)}")
     print(f"Average reward: {avg_reward:.4f}")
     print(f"Max reward: {max_reward:.4f}")
@@ -427,27 +373,22 @@ def evaluate_model_performance(
     finish_called = [r.get('finish_called') for r in all_results if r.get('finish_called') is not None]
     if finish_called:
         finish_rate = sum(finish_called) / len(finish_called) if finish_called else 0.0
-        logger.info(f"Finish call rate: {finish_rate:.2%} ({sum(finish_called)}/{len(finish_called)})")
         print(f"Finish call rate: {finish_rate:.2%} ({sum(finish_called)}/{len(finish_called)})")
     
     # Statistics for average turns
     avg_turns = sum(r.get('turns', 0) for r in all_results) / len(all_results)
-    logger.info(f"Average turns: {avg_turns:.2f}")
     print(f"Average turns: {avg_turns:.2f}")
     
     # Statistics for average valid actions
     avg_valid_actions = sum(r.get('valid_actions', 0) for r in all_results) / len(all_results)
-    logger.info(f"Average valid actions: {avg_valid_actions:.2f}")
     print(f"Average valid actions: {avg_valid_actions:.2f}")
     
     print("=" * 80)
     
     # Save detailed results
     output_file = "test_results.json"
-    logger.info(f"Saving detailed results to: {output_file}")
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(all_results, f, ensure_ascii=False, indent=2)
-    logger.info(f"Results saved successfully, {len(all_results)} samples")
     print(f"\nDetailed results saved to: {output_file}")
 
 
@@ -477,10 +418,6 @@ def main():
     
     # Set logging level
     logger.setLevel(getattr(logging, args.log_level))
-    logger.info("=" * 80)
-    logger.info("Starting ToolBench Model Performance Test")
-    logger.info("=" * 80)
-    logger.info(f"Arguments: {vars(args)}")
     
     evaluate_model_performance(
         model_path=args.model_path,
@@ -501,10 +438,6 @@ def main():
         gpu_memory_utilization=args.gpu_memory_utilization,
     )
     
-    logger.info("=" * 80)
-    logger.info("ToolBench Model Performance Test completed")
-    logger.info("=" * 80)
-
 
 if __name__ == "__main__":
     main()
