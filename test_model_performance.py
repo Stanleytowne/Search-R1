@@ -12,6 +12,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 from verl import DataProto
+from verl.utils.model import compute_position_id_with_mask
 
 from search_r1.llm_agent.generation import LLMGenerationManager, GenerationConfig, normalize_api_name
 from search_r1.llm_agent.toolbench_reward import ToolBenchRewardManager
@@ -339,18 +340,23 @@ def evaluate_model_performance(
             attention_mask = encoded['attention_mask']
             logger.debug(f"Tokenized: input_ids shape={input_ids.shape}, attention_mask shape={attention_mask.shape}")
             
+            # Create position_ids from attention_mask
+            position_ids = compute_position_id_with_mask(attention_mask)
+            logger.debug(f"Created position_ids: shape={position_ids.shape}")
+            
             # Create initial DataProto
             logger.debug("Creating initial DataProto")
             initial_input_ids = input_ids
             gen_batch = DataProto.from_dict({
                 'input_ids': input_ids,
                 'attention_mask': attention_mask,
+                'position_ids': position_ids,
             })
             gen_batch.non_tensor_batch = {
                 'extra_info': batch_extra_info,
                 'data_source': batch_data[0].get('data_source', 'toolbench'),
             }
-            logger.debug(f"DataProto created: input_ids shape={input_ids.shape}")
+            logger.debug(f"DataProto created: input_ids shape={input_ids.shape}, position_ids shape={position_ids.shape}")
             
             # Run generation loop
             logger.info(f"Running generation loop for batch {batch_idx + 1}")
