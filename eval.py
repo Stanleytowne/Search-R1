@@ -37,6 +37,7 @@ class SimpleActorRolloutWrapper:
         """
         input_ids = data.batch['input_ids']
         if input_ids.dtype != torch.int64:
+            print("WARNING: input_ids dtype is not int64")
             input_ids = input_ids.to(torch.int64)
         
         batch_size = input_ids.shape[0]
@@ -62,6 +63,7 @@ class SimpleActorRolloutWrapper:
             top_p=self.top_p if self.top_p > 0 else 0.0,
             max_tokens=self.max_new_tokens,
             stop_token_ids=[self.tokenizer.eos_token_id] if self.tokenizer.eos_token_id is not None else None,
+            min_tokens=5,
         )
         
         # Generate using vLLM
