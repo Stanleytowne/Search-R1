@@ -100,24 +100,17 @@ class SimpleActorRolloutWrapper:
         return response_data
 
 
-def load_test_data(data_path: str, max_samples: int = None) -> List[Dict]:
+def load_test_data(data_path: str) -> List[Dict]:
     """
     Load test data
     
     Args:
         data_path: Test data path (parquet format)
-        max_samples: Maximum number of samples (None means load all)
         
     Returns:
         List of test data
     """
-    logger.info(f"Loading test data from: {data_path}")
     df = pd.read_parquet(data_path)
-    logger.info(f"Loaded parquet file, total rows: {len(df)}, columns: {df.columns.tolist()}")
-    
-    if max_samples:
-        logger.info(f"Limiting to {max_samples} samples")
-        df = df.head(max_samples)
     
     # Convert to list format
     data_list = []
@@ -129,7 +122,6 @@ def load_test_data(data_path: str, max_samples: int = None) -> List[Dict]:
         }
         data_list.append(data_item)
     
-    logger.info(f"Successfully loaded {len(data_list)} test samples")
     return data_list
 
 
@@ -142,7 +134,6 @@ def create_prompt_from_data(data_item: Dict, tokenizer) -> str:
         tokenize=False
     )
     
-    logger.debug(f"Created prompt, length: {len(prompt_str)} characters")
     return prompt_str
 
 
