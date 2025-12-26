@@ -274,7 +274,6 @@ def evaluate_model_performance(
     
     # 8. Evaluate
     all_results = []
-    all_responses = []
     
     # Process in batches
     num_batches = (len(test_data) + batch_size - 1) // batch_size
@@ -287,8 +286,10 @@ def evaluate_model_performance(
         # Prepare batch data
         batch_prompts = []
         batch_extra_info = []
+        batch_queries = []
         
         for data_item in batch_data:
+            batch_queries.append(data_item['prompt'][1]['content'])
             prompt_str = create_prompt_from_data(data_item, tokenizer)
             batch_prompts.append(prompt_str)
             batch_extra_info.append(data_item.get('extra_info', {}))
@@ -327,18 +328,18 @@ def evaluate_model_performance(
         
         # Calculate rewards
         rewards = reward_manager(final_output)
-        breakpoint()
         
         # Collect results
         for i in range(len(batch_data)):
             sample_idx = start_idx + i
-            reward_value = rewards[i].max().item() if rewards[i].numel() > 0 else 0.0
+            reward_value = rewards[i].sum().item()
             
             # Get reward components (simplified, need to get from reward_manager internals)
             result = {
                 'sample_idx': sample_idx,
-                'total_reward': reward_value,
-                'query': batch_prompts[i][:200] + '...' if len(batch_prompts[i]) > 200 else batch_prompts[i],
+                'acc': reward_value,
+                'query': batch_queries[i],
+                'response': tokenizer.decode(final_output.batch['responses'][i]),
             }
             
             # Get statistics from meta_info
@@ -359,29 +360,9 @@ def evaluate_model_performance(
         print("No valid evaluation results!")
         return
     
-    total_rewards = [r['total_reward'] for r in all_results]
-    avg_reward = sum(total_rewards) / len(total_rewards)
-    max_reward = max(total_rewards)
-    min_reward = min(total_rewards)
-    
-    print(f"Total samples: {len(all_results)}")
-    print(f"Average reward: {avg_reward:.4f}")
-    print(f"Max reward: {max_reward:.4f}")
-    print(f"Min reward: {min_reward:.4f}")
-    
-    # Statistics for Finish call rate
-    finish_called = [r.get('finish_called') for r in all_results if r.get('finish_called') is not None]
-    if finish_called:
-        finish_rate = sum(finish_called) / len(finish_called) if finish_called else 0.0
-        print(f"Finish call rate: {finish_rate:.2%} ({sum(finish_called)}/{len(finish_called)})")
-    
-    # Statistics for average turns
-    avg_turns = sum(r.get('turns', 0) for r in all_results) / len(all_results)
-    print(f"Average turns: {avg_turns:.2f}")
-    
-    # Statistics for average valid actions
-    avg_valid_actions = sum(r.get('valid_actions', 0) for r in all_results) / len(all_results)
-    print(f"Average valid actions: {avg_valid_actions:.2f}")
+    all_accs = [r['acc'] for r in all_results]
+    avg_acc = sum(all_accs) / len(all_accs)
+    print(f"Average accuracy: {avg_acc:.4f}")
     
     print("=" * 80)
     
