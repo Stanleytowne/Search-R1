@@ -8,10 +8,15 @@ export NCCL_DEBUG=WARN
 export VLLM_ATTENTION_BACKEND=XFORMERS
 NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
 
+if [ -z "$1" ]; then
+    echo "Usage: $0 <category> <model_path>"
+    exit 1
+fi
+
 CATEGORY=${1}
+MODEL_PATH=${2}
 TRAIN_FILE=data/toolbench_rl/${CATEGORY}.parquet
 VAL_FILE=data/toolbench_test/${CATEGORY}.parquet
-MODEL_PATH=${2}
 
 TOOLBENCH_URL=http://127.0.0.1:12345
 REWARD_SERVER_URL=http://localhost:12346/evaluate_batch

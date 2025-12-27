@@ -5,6 +5,10 @@ set -e
 cd ../Long-Digestor-Experiments
 export WANDB_API_KEY=
 
+if [ -z "$1" ]; then
+    echo "Usage: $0 <category> <model_path>"
+    exit 1
+fi
 category=${1}
 
 model_path=/ceph/home/muhan01/huggingfacemodels/Qwen2.5-7B-Instruct

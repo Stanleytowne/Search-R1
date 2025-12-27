@@ -1,5 +1,11 @@
 #!/bin/bash
 set -e
+
+if [ -z "$1" ]; then
+    echo "Usage: $0 <output_name>"
+    exit 1
+fi
+
 output_name=${1}
 
 for category in Mapping Media Movies Search; do
