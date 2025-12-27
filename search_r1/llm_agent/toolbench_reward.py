@@ -315,7 +315,7 @@ class ToolBenchRewardManager:
         
         if observations:
             for obs_json in observations:
-                has_error = bool(obs_json.get('error', '').strip())
+                has_error = obs_json.get('error', '') != ''
                 if not has_error:  # 如果有error
                     reward += 1
             
