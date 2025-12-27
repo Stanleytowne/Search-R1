@@ -5,4 +5,4 @@ temperature: 1.0
 tools_folder: "./tools"
 cache_folder: "./tool_response_cache"
 is_save: false
-port: 8080
+port: 12345

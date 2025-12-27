@@ -59,4 +59,5 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     +trainer.val_before_train=true \
     trainer.test_freq=10 \
     trainer.total_epochs="$EPOCHS" \
-    trainer.save_freq=50
+    trainer.save_freq=25 \
+    trainer.default_local_dir=checkpoints/$CATEGORY/stage-rl

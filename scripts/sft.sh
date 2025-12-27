@@ -5,7 +5,7 @@ set -e
 cd ../Long-Digestor-Experiments
 export WANDB_API_KEY=
 
-category=${1:-Search}
+category=${1}
 
 model_path=/ceph/home/muhan01/huggingfacemodels/Qwen2.5-7B-Instruct
 train_data_path=../Search-R1/data/toolbench_stage1/${category}.parquet
@@ -65,12 +65,10 @@ echo "Latest checkpoint: $latest_checkpoint"
 # Stage 2 配置
 train_data_path=../Search-R1/data/toolbench_stage2/${category}.parquet
 val_data_path=../Search-R1/data/toolbench_stage2/${category}.parquet
-nproc_per_node=8
 save_path=../Search-R1/checkpoints/${category}/stage2
 epochs=3
 lr=2e-5
 batch_size=32
-micro_batch_size_per_gpu=2
 
 project_name=toolbench-sft-stage2
 
@@ -87,7 +85,7 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.val_files=$val_data_path \
     data.prompt_key=prompt \
     data.response_key=response \
-    data.system_prompt_key=system \
+    +data.system_prompt_key=system \
     data.max_length=8192 \
     optim.lr=$lr \
     model.partial_pretrain=$latest_checkpoint \

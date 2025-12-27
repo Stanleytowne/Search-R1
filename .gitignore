@@ -2,6 +2,7 @@ wandb_api.json
 api_server/tools
 api_server/tool_response_cache
 *.out
+data-toolbench/*
 
 **/*.pt
 **/checkpoints

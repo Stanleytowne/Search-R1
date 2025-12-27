@@ -41,8 +41,6 @@ def main(config):
             num_gpus = config.trainer.n_gpus_per_node
         
         ray.init(
-            num_gpus=num_gpus,
-            num_cpus=num_gpus,  # Match CPU to GPU count
             runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}},
             ignore_reinit_error=True
         )

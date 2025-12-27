@@ -1,48 +1,14 @@
 #!/bin/bash
 set -e
+output_name=${1}
 
-export WANDB_API_KEY=
-export CUDA_VISIBLE_DEVICES=0,1,2,3
-export TOKENIZERS_PARALLELISM=true
-export NCCL_DEBUG=WARN
-export VLLM_ATTENTION_BACKEND=XFORMERS
-NUM_GPUS=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l)
-
-if [ -z "$1" ]; then
-    echo "Usage: $0 <category> <model_path>"
-    exit 1
-fi
-
-CATEGORY=${1}
-TRAIN_FILE=data/toolbench_rl/${CATEGORY}.parquet
-VAL_FILE=data/toolbench_test/${CATEGORY}.parquet
-MODEL_PATH=${2}
-
-TOOLBENCH_URL=http://127.0.0.1:12345
-REWARD_SERVER_URL=http://localhost:12346/evaluate_batch
-
-WANDB_PROJECT=toolbench_eval
-EXPERIMENT_NAME=${CATEGORY}
-
-PASS_REWARD_WEIGHT=1
-
-VAL_BATCH_SIZE=2
-
-# 运行训练
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
-    --config-name=grpo_toolbench_trainer \
-    data.train_files="$TRAIN_FILE" \
-    data.val_files="$VAL_FILE" \
-    data.val_batch_size="$VAL_BATCH_SIZE" \
-    actor_rollout_ref.model.path="$MODEL_PATH" \
-    actor_rollout_ref.model.enable_gradient_checkpointing=true \
-    actor_rollout_ref.model.use_remove_padding=True \
-    toolbench_url="$TOOLBENCH_URL" \
-    reward_model.reward_server_url="$REWARD_SERVER_URL" \
-    algorithm.adv_estimator=grpo \
-    reward_model.pass_reward_weight="$PASS_REWARD_WEIGHT" \
-    trainer.experiment_name="$EXPERIMENT_NAME" \
-    trainer.project_name="$WANDB_PROJECT" \
-    trainer.n_gpus_per_node="$NUM_GPUS" \
-    +trainer.val_before_train=true \
-    +trainer.val_only=true
+for category in Mapping Media Movies Search; do
+    echo "Starting eval for $category"
+    save_path=checkpoints/$category/stage2
+    latest_step=$(ls "$save_path" | grep "global_step_" | sed 's/global_step_//' | sort -n | tail -1)
+    latest_checkpoint="$save_path/global_step_$latest_step"
+    echo "evaluating stage2-ed model at $latest_checkpoint"
+    python eval.py --model_path $latest_checkpoint --category $category --output_name $output_name
+    echo "evaluating inherited model"
+    python eval.py --model_path checkpoints/$category/inherited --category $category --output_name $output_name
+done

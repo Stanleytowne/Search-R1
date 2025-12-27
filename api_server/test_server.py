@@ -1,7 +1,7 @@
 import requests
 import json
 
-url = 'http://10.153.48.58:8080/virtual'
+url = 'http://127.0.0.1:12345/virtual'
 headers = {
     'accept': 'application/json',
     'Content-Type': 'application/json',
