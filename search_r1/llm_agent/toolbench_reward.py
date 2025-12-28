@@ -19,13 +19,11 @@ class ToolBenchRewardManager:
         self,
         tokenizer,
         num_examine: int = 0,
-        reward_server_url: str = "http://localhost:8000/evaluate_batch",
-        strict_turn_check: bool = True,
+        reward_server_url: str = "http://localhost:8000/evaluate_batch"
     ):
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_server_url = reward_server_url
-        self.strict_turn_check = strict_turn_check
 
     def _validate_turn_consistency(
         self,
@@ -42,30 +40,20 @@ class ToolBenchRewardManager:
         """
         turns_stats_i = int(turns_stats_tensor[sample_idx].item()) if turns_stats_tensor is not None else None
 
-        problems = []
-
         # turns_stats is expected to be either equal to executed turns, or 1 smaller when a final forced-finish
         # rollout happened (because turns_stats isn't incremented in the final rollout block).
         if turns_stats_i is not None:
             ok = (n_turns_from_info_mask == turns_stats_i)
             if not ok:
-                problems.append(
-                    f"info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}"
+                msg = (
+                    f"[TURN CHECK FAILED] sample={sample_idx} "
+                    f"info_mask_turns={n_turns_from_info_mask}, "
+                    f"turns_stats={turns_stats_i}, "
+                    f"Problems: info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}\n"
+                    f"response: {response_str}"
                 )
-
-        if problems:
-            msg = (
-                f"[TURN CHECK FAILED] sample={sample_idx} "
-                f"info_mask_turns={n_turns_from_info_mask}, "
-                f"turns_stats={turns_stats_i}, "
-                f"Problems: {', '.join(problems)}\n"
-                f"response: {response_str}"
-            )
-            if self.strict_turn_check:
                 raise AssertionError(msg)
-            else:
-                print(msg)
-    
+
     def __call__(self, data: DataProto) -> torch.Tensor:
         # if 'rm_scores' in data.batch.keys(), return the rm_scores
         if 'rm_scores' in data.batch.keys():
