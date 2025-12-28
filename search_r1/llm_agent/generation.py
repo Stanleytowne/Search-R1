@@ -466,7 +466,6 @@ class LLMGenerationManager:
         meta_info['valid_action_stats'] = valid_action_stats
         
         # Add ToolBench reward computation info
-        # meta_info['api_success_history'] = self.api_success_history.copy()
         meta_info['api_success_history'] = self.api_success_history
         meta_info['finish_called'] = self.finish_call_history
         
@@ -581,11 +580,7 @@ class LLMGenerationManager:
                 # Track API call result for reward computation
                 # Use original batch index for api_success_history
                 has_error = bool(error and error.strip())
-                if original_idx in self.api_success_history:
-                    self.api_success_history[original_idx].append(not has_error)
-                else:
-                    # Initialize if not exists
-                    self.api_success_history[original_idx] = [not has_error]
+                self.api_success_history[original_idx].append(not has_error)
                 
                 # Format as function response (matching StableToolBench format)
                 # In StableToolBench, function response format is: "Observation: {json_string}\n"
