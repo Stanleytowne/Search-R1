@@ -219,10 +219,6 @@ def evaluate_model_performance(
     # 6. Create RewardManager
     reward_manager = ToolBenchRewardManager(
         tokenizer=tokenizer,
-        format_reward_weight=0,
-        function_call_reward_weight=0,
-        finish_reward_weight=0,
-        pass_reward_weight=1,
         num_examine=0,
         reward_server_url=reward_server_url,
     )

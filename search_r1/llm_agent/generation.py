@@ -29,9 +29,6 @@ def normalize_api_name(api_name: str) -> str:
     """
     if not api_name:
         return api_name
-    # Don't normalize "Finish" - it's a special function name
-    if api_name.strip() == "Finish":
-        return "Finish"
     return api_name.lower().replace(' ', '_')
 
 @dataclass
@@ -537,7 +534,7 @@ class LLMGenerationManager:
         api_calls = []
         api_indices = []
         for i, (action, action_input) in enumerate(zip(cur_actions, contents)):
-            if action and action != 'Finish' and active_mask[i]:
+            if action and action != 'finish' and active_mask[i]:
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 api_calls.append({
                     'index': i,  # Active batch index (for api_results mapping)
@@ -559,7 +556,7 @@ class LLMGenerationManager:
                 next_obs.append('')
                 dones.append(1)
                 valid_action.append(0)
-            elif action == 'Finish':
+            elif action == 'finish':
                 # Use original batch index
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 if isinstance(content_dict, dict) and 'final_answer' in content_dict:

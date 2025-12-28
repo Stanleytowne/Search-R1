@@ -20,27 +20,15 @@ class ToolBenchRewardManager:
     def __init__(
         self,
         tokenizer,
-        format_reward_weight: float = 0.1,
-        function_call_reward_weight: float = 0.2,
-        finish_reward_weight: float = 0.3,
-        pass_reward_weight: float = 0.1,
         num_examine: int = 0,
         reward_server_url: str = "http://localhost:8000/evaluate_batch"
     ):
         """
         Args:
             tokenizer: Tokenizer用于解码
-            format_reward_weight: 格式奖励权重
-            function_call_reward_weight: Function call奖励权重
-            finish_reward_weight: Finish调用奖励权重
-            pass_reward_weight: Remote pass奖励权重
             num_examine: 打印的样本数量
         """
         self.tokenizer = tokenizer
-        self.format_reward_weight = format_reward_weight
-        self.function_call_reward_weight = function_call_reward_weight
-        self.finish_reward_weight = finish_reward_weight
-        self.pass_reward_weight = pass_reward_weight
         self.num_examine = num_examine
         self.reward_server_url = reward_server_url
     
@@ -151,17 +139,13 @@ class ToolBenchRewardManager:
                 
                 print("="*60 + "\n")
         
-        breakpoint()
-        
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
+        data.meta_info['pass_rewards'] = pass_rewards
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
             for i in range(batch_size):
                 last_turn_end_loc = each_turn_end_loc[i][-1]
                 reward_tensor[i, last_turn_end_loc] = pass_rewards[i]
-
-                # add pass reward to the data so that it can be shown in the metrics
-                data[i].meta_info['pass_reward'] = pass_rewards[i]
                 
                 if i < self.num_examine:
                     response_str = all_trajectories[i]
@@ -174,13 +158,14 @@ class ToolBenchRewardManager:
         format_and_function_call_reward = self._compute_format_and_function_call_reward(meta_info)
         # 2. finish reward for the final turn
         finish_reward = self._compute_finish_reward(meta_info)
+        data.meta_info['format_and_function_call_reward'] = format_and_function_call_reward
+        data.meta_info['finish_reward'] = finish_reward
 
         for i in range(batch_size):
             for j in range(len(each_turn_end_loc[i]) - 1):
                 reward_tensor[i, each_turn_end_loc[i][j]] = format_and_function_call_reward[i][j]
             reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i]
             
-            # 打印示例（用于调试）
             if i < self.num_examine:
                 print(f"\n[Reward Sample {i}]")
                 print(f"  Response: {all_trajectories[i][:200]}...")
@@ -258,18 +243,9 @@ class ToolBenchRewardManager:
 
 def create_toolbench_reward_manager(
     tokenizer,
-    format_reward_weight: float = 0.1,
-    function_call_reward_weight: float = 0.2,
-    finish_reward_weight: float = 0.3,
     **kwargs
 ) -> ToolBenchRewardManager:
-    """
-    创建ToolBench Reward Manager的工厂函数
-    """
     return ToolBenchRewardManager(
         tokenizer=tokenizer,
-        format_reward_weight=format_reward_weight,
-        function_call_reward_weight=function_call_reward_weight,
-        finish_reward_weight=finish_reward_weight,
         **kwargs
     )

@@ -276,6 +276,15 @@ def compute_data_metrics(batch, use_critic=True):
         metrics['env/ratio_of_valid_action'] = float((valid_action_stats / np.array(batch.meta_info['turns_stats'], dtype=np.int16)).mean())
     if 'valid_search_stats' in batch.meta_info:
         metrics['env/number_of_valid_search'] = float(np.array(batch.meta_info['valid_search_stats'], dtype=np.int16).mean())
+    if 'pass_reward' in batch.meta_info:
+        metrics['env/pass_reward'] = float(np.array(batch.meta_info['pass_reward'], dtype=np.float32).mean())
+    if 'format_and_function_call_reward' in batch.meta_info:
+        format_and_function_call_reward = batch.meta_info['format_and_function_call_reward']
+        format_and_function_call_reward = [sum(reward) for reward in format_and_function_call_reward]
+        metrics['env/format_and_function_call_reward'] = float(np.array(format_and_function_call_reward, dtype=np.float32).mean())
+    if 'finish_reward' in batch.meta_info:
+        finish_reward = batch.meta_info['finish_reward']
+        metrics['env/finish_reward'] = float(np.array(finish_reward, dtype=np.float32).mean())
 
 
     return metrics

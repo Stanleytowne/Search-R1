@@ -24,12 +24,6 @@ REWARD_SERVER_URL=http://localhost:12346/evaluate_batch
 WANDB_PROJECT=toolbench_grpo
 EXPERIMENT_NAME=${CATEGORY}
 
-# Reward权重
-FORMAT_REWARD_WEIGHT=1
-FUNCTION_CALL_REWARD_WEIGHT=1
-FINISH_REWARD_WEIGHT=1
-PASS_REWARD_WEIGHT=1
-
 # GRPO特定配置
 N_AGENT=4
 LEARNING_RATE=1e-6
@@ -54,10 +48,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     toolbench_url="$TOOLBENCH_URL" \
     reward_model.reward_server_url="$REWARD_SERVER_URL" \
     algorithm.adv_estimator=grpo \
-    reward_model.format_reward_weight="$FORMAT_REWARD_WEIGHT" \
-    reward_model.function_call_reward_weight="$FUNCTION_CALL_REWARD_WEIGHT" \
-    reward_model.finish_reward_weight="$FINISH_REWARD_WEIGHT" \
-    reward_model.pass_reward_weight="$PASS_REWARD_WEIGHT" \
     trainer.experiment_name="$EXPERIMENT_NAME" \
     trainer.project_name="$WANDB_PROJECT" \
     trainer.n_gpus_per_node="$NUM_GPUS" \
