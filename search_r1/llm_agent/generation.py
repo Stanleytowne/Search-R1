@@ -112,24 +112,51 @@ class LLMGenerationManager:
         )['input_ids']
 
     def _postprocess_responses(self, responses: torch.Tensor) -> torch.Tensor:
-        """remove the eos token from the responses"""
+        """Process responses to stop at search operation or answer operation or function call."""
         responses_str = self.tokenizer.batch_decode(
             responses, 
             skip_special_tokens=True
         )
 
+        # For ToolBench format, stop at Action Input (complete JSON) or end of response
+        # Format: Thought: ...\nAction: ...\nAction Input: {...}
         processed_responses = []
         for resp in responses_str:
-            # prevent the model from generating fake observations
-            if resp.find('\nObservation:') != -1:
-                breakpoint()
-                print("[WARNING] FAKE OBSERVATION DETECTED, REMOVING IT")
-                resp = resp[:resp.find('\nObservation:')]
-                resp = resp.rstrip()
-            processed_responses.append(resp)
-
-        responses = self._batch_tokenize(processed_responses)
-        return responses, processed_responses
+            resp = resp.rstrip()
+            
+            # Check if there's a complete Action Input (function call)
+            # Look for "Action Input:" followed by JSON object
+            action_input_start = resp.find('Action Input:')
+            if action_input_start != -1:
+                # Find the JSON object after "Action Input:"
+                json_start = resp.find('{', action_input_start)
+                if json_start != -1:
+                    # Try to find the matching closing brace
+                    brace_count = 0
+                    json_end = json_start
+                    for i in range(json_start, len(resp)):
+                        if resp[i] == '{':
+                            brace_count += 1
+                        elif resp[i] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_end = i + 1
+                                break
+                    if brace_count == 0:
+                        # Found complete JSON, extract up to here (including the closing brace)
+                        processed_responses.append(resp[:json_end])
+                    else:
+                        # Incomplete JSON, keep original (but remove </s>)
+                        processed_responses.append(resp)
+                else:
+                    processed_responses.append(resp)
+            else:
+                # No Action Input found, keep original response (but remove </s>)
+                processed_responses.append(resp)
+        responses_str = processed_responses
+        
+        responses = self._batch_tokenize(responses_str)
+        return responses, responses_str
 
     def _process_next_obs(self, next_obs: List[str], last: bool = False, active_mask: torch.Tensor = None) -> torch.Tensor:
         """Process next observations from environment."""
