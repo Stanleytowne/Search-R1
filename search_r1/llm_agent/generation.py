@@ -70,8 +70,8 @@ class LLMGenerationManager:
         ))
         
         # Track API calls and Finish calls for reward computation
-        # Format: {sample_idx: [list of (error, success)]}
-        self.api_call_history = {}
+        # Format: {sample_idx: [True, False, ...]}
+        self.api_success_history = {}
         # Format: {sample_idx: True | False}
         self.finish_call_history = {}
 
@@ -330,7 +330,7 @@ class LLMGenerationManager:
         
         # 1. Initialize ToolBench related variables: api_name, category, etc.
         
-        self.api_call_history = {i: [] for i in range(batch_size)}
+        self.api_success_history = {i: [] for i in range(batch_size)}
         self.finish_call_history = {i: None for i in range(batch_size)}
         # Extract category and API list from extra_info for each sample
         self.sample_categories = {}
@@ -470,10 +470,7 @@ class LLMGenerationManager:
         meta_info['valid_action_stats'] = valid_action_stats
         
         # Add ToolBench reward computation info
-        meta_info['api_error_stats'] = {
-            i: sum(errors) 
-            for i, errors in self.api_call_history.items()
-        }
+        meta_info['api_success_history'] = self.api_success_history.copy()
         meta_info['finish_called'] = self.finish_call_history.copy()
         
         print("ACTIVE_TRAJ_NUM:", active_num_list)
@@ -510,64 +507,7 @@ class LLMGenerationManager:
         final_output = DataProto.from_dict(final_output)
         final_output.meta_info.update(meta_info)
         
-        # Debug: Print full conversation for first sample
-        # if final_output.batch['input_ids'].shape[0] > 0:
-        #     self._debug_print_full_conversation(final_output, 0)
-        
         return final_output
-
-    def _debug_print_full_conversation(self, final_output: DataProto, sample_idx: int = 0):
-        """Print full conversation for debugging purposes."""
-        try:
-            # Get prompt (initial input)
-            prompt_ids = final_output.batch['prompts'][sample_idx]
-            prompt_mask = final_output.batch['attention_mask'][sample_idx, :prompt_ids.shape[0]]
-            valid_prompt_ids = prompt_ids[prompt_mask.bool()].int()
-            
-            # Get full input_ids (prompt + responses)
-            input_ids = final_output.batch['input_ids'][sample_idx]
-            attention_mask = final_output.batch['attention_mask'][sample_idx]
-            valid_input_ids = input_ids[attention_mask.bool()].int()
-            
-            # Decode prompt
-            prompt_text = self.tokenizer.decode(valid_prompt_ids, skip_special_tokens=False)
-            
-            # Decode full sequence
-            full_text = self.tokenizer.decode(valid_input_ids, skip_special_tokens=False)
-            
-            # Extract response part (everything after prompt)
-            # Find where prompt ends in the full text
-            prompt_len = len(prompt_text)
-            if len(full_text) > prompt_len:
-                response_text = full_text[prompt_len:].lstrip()
-            else:
-                response_text = ""
-            
-            # Get metadata if available
-            turns = final_output.meta_info.get('turns_stats', [0])[sample_idx] if 'turns_stats' in final_output.meta_info else 0
-            valid_actions = final_output.meta_info['valid_action_stats'][sample_idx] if 'valid_action_stats' in final_output.meta_info else [0]
-            
-            # Print formatted conversation
-            print("\n" + "=" * 100)
-            print(f"[DEBUG] FULL CONVERSATION - Sample {sample_idx} (Turns: {turns}, Valid Actions: {valid_actions})")
-            print("=" * 100)
-            print("\n[PROMPT (Initial Context)]")
-            print("-" * 100)
-            print(prompt_text)
-            print("\n[RESPONSES (Generated Content)]")
-            print("-" * 100)
-            if response_text:
-                print(response_text)
-            else:
-                print("(No response generated)")
-            print("\n" + "=" * 100 + "\n")
-            print(f"[DEBUG] api_call_history: {self.api_call_history[sample_idx]}")
-            print(f"[DEBUG] finish_call_history: {self.finish_call_history[sample_idx]}")
-            print("\n" + "=" * 100 + "\n")
-        except Exception as e:
-            print(f"[DEBUG] Error printing full conversation: {e}")
-            import traceback
-            traceback.print_exc()
 
     def execute_predictions(self, predictions: List[str], active_mask=None, original_indices=None) -> List[str]:
         """
@@ -605,7 +545,7 @@ class LLMGenerationManager:
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 api_calls.append({
                     'index': i,  # Active batch index (for api_results mapping)
-                    'original_index': original_idx,  # Original batch index (for api_call_history)
+                    'original_index': original_idx,  # Original batch index (for api_success_history)
                     'action': action,
                     'content': content_dict
                 })
@@ -618,6 +558,7 @@ class LLMGenerationManager:
         
         # Process results
         for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
+            original_idx = original_indices[i] if i < len(original_indices) else i
             if not active:
                 next_obs.append('')
                 dones.append(1)
@@ -641,14 +582,13 @@ class LLMGenerationManager:
                 response = result.get('response', '')
                 
                 # Track API call result for reward computation
-                # Use original batch index for api_call_history
-                original_idx = original_indices[i] if i < len(original_indices) else i
+                # Use original batch index for api_success_history
                 has_error = bool(error and error.strip())
-                if original_idx in self.api_call_history:
-                    self.api_call_history[original_idx].append(has_error)
+                if original_idx in self.api_success_history:
+                    self.api_success_history[original_idx].append(not has_error)
                 else:
                     # Initialize if not exists
-                    self.api_call_history[original_idx] = [has_error]
+                    self.api_success_history[original_idx] = [not has_error]
                 
                 # Format as function response (matching StableToolBench format)
                 # In StableToolBench, function response format is: "Observation: {json_string}\n"
@@ -663,11 +603,13 @@ class LLMGenerationManager:
                 next_obs.append('\n\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n\n')
                 dones.append(0)
                 valid_action.append(0)
+                self.api_success_history[original_idx].append(False)
             else:
                 # No action detected
                 next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
                 dones.append(0)
                 valid_action.append(0)
+                self.api_success_history[original_idx].append(False)
             
         return next_obs, dones, valid_action
 
