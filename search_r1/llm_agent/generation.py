@@ -116,9 +116,20 @@ class LLMGenerationManager:
         responses_str = self.tokenizer.batch_decode(
             responses, 
             skip_special_tokens=True
-        )        
-        responses = self._batch_tokenize(responses_str)
-        return responses, responses_str
+        )
+
+        processed_responses = []
+        for resp in responses_str:
+            # prevent the model from generating fake observations
+            if resp.find('\nObservation:') != -1:
+                breakpoint()
+                print("[WARNING] FAKE OBSERVATION DETECTED, REMOVING IT")
+                resp = resp[:resp.find('\nObservation:')]
+                resp = resp.rstrip()
+            processed_responses.append(resp)
+
+        responses = self._batch_tokenize(processed_responses)
+        return responses, processed_responses
 
     def _process_next_obs(self, next_obs: List[str], last: bool = False, active_mask: torch.Tensor = None) -> torch.Tensor:
         """Process next observations from environment."""
@@ -523,7 +534,6 @@ class LLMGenerationManager:
                 dones.append(1)
                 valid_action.append(0)
             elif action == 'Finish':
-                breakpoint()
                 # Use original batch index
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 if isinstance(content_dict, dict) and 'final_answer' in content_dict:
