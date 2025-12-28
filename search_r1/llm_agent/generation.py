@@ -200,7 +200,6 @@ class LLMGenerationManager:
             'position_ids': new_position_ids[:, -max_len:],
             'attention_mask': new_attention_mask[:, -max_len:]
         })
-        new_rollings.meta_info.update(rollings.meta_info)
         
         return new_rollings
 
@@ -291,16 +290,6 @@ class LLMGenerationManager:
         # Remove padding from output
         trimmed_batch = {k: v[:-padding_size] for k, v in padded_output.batch.items()}
         
-        # Handle meta_info if present
-        if hasattr(padded_output, 'meta_info') and padded_output.meta_info:
-            trimmed_meta = {}
-            for k, v in padded_output.meta_info.items():
-                if isinstance(v, torch.Tensor):
-                    trimmed_meta[k] = v[:-padding_size]
-                else:
-                    trimmed_meta[k] = v
-            padded_output.meta_info = trimmed_meta
-            
         padded_output.batch = trimmed_batch
         return padded_output
 
@@ -325,7 +314,7 @@ class LLMGenerationManager:
         self.sample_categories = {}
         self.sample_api_lists = {}  # Store API validation info for each sample
         
-        # Get extra_info from non_tensor_batch or meta_info
+        # Get extra_info from non_tensor_batch
         extra_info = gen_batch.non_tensor_batch['extra_info']
         
         # Extract category and API info for each sample
@@ -369,8 +358,6 @@ class LLMGenerationManager:
                 k: v[active_mask] for k, v in rollings.batch.items()
             })            
             gen_output = self._generate_with_gpu_padding(rollings_active)
-
-            meta_info = gen_output.meta_info            
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
@@ -379,7 +366,7 @@ class LLMGenerationManager:
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
-            turns_stats[curr_active_mask] += 1
+            turns_stats[active_mask] += 1
             # valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
             for i, valid in enumerate(valid_action):
                 valid_action_stats[i].append(valid)
@@ -411,8 +398,6 @@ class LLMGenerationManager:
                 k: v[active_mask] for k, v in rollings.batch.items()
             })            
             gen_output = self._generate_with_gpu_padding(rollings_active)
-
-            meta_info = gen_output.meta_info
             responses_ids, responses_str = self._postprocess_responses(gen_output.batch['responses'])
 
             # add finish prompt to responses_str
@@ -437,16 +422,21 @@ class LLMGenerationManager:
                 responses_ids,
             )
         
-        meta_info['turns_stats'] = turns_stats.tolist()
-        meta_info['active_mask'] = active_mask.tolist()
-        meta_info['valid_action_stats'] = valid_action_stats
-        meta_info['valid_api_call_stats'] = valid_api_call_stats
-        
-        return self._compose_final_output(original_left_side, original_right_side, meta_info)
+        # IMPORTANT:
+        # DataProto 的 per-sample 信息必须写入 batch/non_tensor_batch（与样本索引天然对齐）。
+        # For per-sample bookkeeping, always write to `batch` (tensor) or `non_tensor_batch` (np.object array).
+        per_sample_info = {
+            'turns_stats': turns_stats,
+            'active_mask': active_mask,
+            'valid_action_stats': valid_action_stats,
+            'valid_api_call_stats': valid_api_call_stats,
+        }
+
+        return self._compose_final_output(original_left_side, original_right_side, per_sample_info)
 
     def _compose_final_output(self, left_side: Dict,
                             right_side: Dict,
-                            meta_info: Dict) -> Tuple[Dict, Dict]:
+                            per_sample_info: Dict) -> Tuple[Dict, Dict]:
         """Compose final generation output."""
         final_output = right_side.copy()
         final_output['prompts'] = left_side['input_ids']
@@ -470,9 +460,44 @@ class LLMGenerationManager:
         final_output['position_ids'] = self.tensor_fn.create_position_ids(
             final_output['attention_mask']
         )
+
+        # --- Per-sample info (reliable alignment) ---
+        # 1) fixed-shape tensors into `batch`
+        turns_stats = per_sample_info['turns_stats'].to(dtype=torch.int64)
+        active_mask = per_sample_info['active_mask'].to(dtype=torch.bool)
+        final_output['turns_stats'] = turns_stats
+        final_output['active_mask'] = active_mask
+
+        # 2) variable-length lists -> padded tensors into `batch` (plus lengths)
+        valid_action_stats = per_sample_info['valid_action_stats']
+        valid_api_call_stats = per_sample_info['valid_api_call_stats']
+        bsz = int(turns_stats.shape[0])
+        max_steps = 0
+        for i in range(bsz):
+            max_steps = max(max_steps, len(valid_action_stats[i]), len(valid_api_call_stats[i]))
+
+        # Use -1 as PAD so downstream can ignore padding safely.
+        va = torch.full((bsz, max_steps), -1, dtype=torch.int8, device=turns_stats.device)
+        vc = torch.full((bsz, max_steps), -1, dtype=torch.int8, device=turns_stats.device)
+        va_len = torch.zeros((bsz,), dtype=torch.int64, device=turns_stats.device)
+        vc_len = torch.zeros((bsz,), dtype=torch.int64, device=turns_stats.device)
+
+        for i in range(bsz):
+            a_i = valid_action_stats[i]
+            c_i = valid_api_call_stats[i]
+            va_len[i] = len(a_i)
+            vc_len[i] = len(c_i)
+            if len(a_i) > 0:
+                va[i, :len(a_i)] = torch.tensor(a_i, dtype=torch.int8, device=turns_stats.device)
+            if len(c_i) > 0:
+                vc[i, :len(c_i)] = torch.tensor(c_i, dtype=torch.int8, device=turns_stats.device)
+
+        final_output['valid_action_stats'] = va
+        final_output['valid_action_stats_len'] = va_len
+        final_output['valid_api_call_stats'] = vc
+        final_output['valid_api_call_stats_len'] = vc_len
         
         final_output = DataProto.from_dict(final_output)
-        final_output.meta_info.update(meta_info)
         
         return final_output
 

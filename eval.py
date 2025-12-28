@@ -97,11 +97,6 @@ class SimpleActorRolloutWrapper:
         response_data = DataProto.from_dict({
             'responses': generated_ids_tensor,
         })
-        
-        # Preserve meta_info if exists
-        if hasattr(data, 'meta_info'):
-            response_data.meta_info = data.meta_info.copy()
-        
         return response_data
 
 
@@ -302,12 +297,19 @@ def evaluate_model_performance(
                 'response': tokenizer.decode(final_output.batch['responses'][i]),
             }
             
-            # Get statistics from meta_info
-            if hasattr(final_output, 'meta_info'):
-                meta = final_output.meta_info
-                result['turns'] = meta['turns_stats'][i]
-                result['valid_actions'] = sum(meta['valid_action_stats'][i])
-                result['finish_called'] = meta['finish_called'][i]
+            # Get per-sample statistics (prefer batch tensors for reliable alignment)
+            if hasattr(final_output, 'batch') and final_output.batch is not None:
+                if 'turns_stats' in final_output.batch.keys():
+                    result['turns'] = int(final_output.batch['turns_stats'][i].item())
+                if 'valid_action_stats' in final_output.batch.keys() and 'valid_action_stats_len' in final_output.batch.keys():
+                    va = final_output.batch['valid_action_stats'][i]
+                    va_len = int(final_output.batch['valid_action_stats_len'][i].item())
+                    if va_len > 0:
+                        result['valid_actions'] = int(va[:va_len].sum().item())
+                # Derive finish_called from response text (robust fallback)
+                resp_text = tokenizer.decode(final_output.batch['responses'][i])
+                result['finish_called'] = ('Action: finish' in resp_text) or ('Action: Finish' in resp_text)
+            # 不再从“全局字典”读取逐样本信息（在 DataProto 里不保证与样本对齐）
             
             all_results.append(result)
     

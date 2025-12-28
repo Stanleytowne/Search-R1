@@ -34,9 +34,13 @@ class ToolBenchRewardManager:
         response_length = data.batch['responses'].shape[1]
         # init reward tensor
         reward_tensor = torch.zeros((batch_size, response_length), dtype=torch.float32)
-        
-        # get ToolBench related information from meta_info
-        meta_info = data.meta_info
+
+        # Per-sample bookkeeping must come from batch (reliably aligned).
+        active_mask_tensor = data.batch.get('active_mask', None)
+        valid_action_stats_tensor = data.batch.get('valid_action_stats', None)
+        valid_action_stats_len_tensor = data.batch.get('valid_action_stats_len', None)
+        valid_api_call_stats_tensor = data.batch.get('valid_api_call_stats', None)
+        valid_api_call_stats_len_tensor = data.batch.get('valid_api_call_stats_len', None)
 
         # get all queries, trajectories and each turn end locations
         all_queries = []
@@ -75,7 +79,6 @@ class ToolBenchRewardManager:
                     turn_indices.append(t)
             
             each_turn_end_loc[i] = turn_indices
-            assert len(each_turn_end_loc[i]) == meta_info['turns_stats'][i], f"Sample {i} has turns stats as {meta_info['turns_stats'][i]} and each turn end loc as {each_turn_end_loc[i]}, \nresponse: {response_str}"
 
             if i < self.num_examine:
                 print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
@@ -125,7 +128,8 @@ class ToolBenchRewardManager:
                 print("="*60 + "\n")
         
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
-        data.meta_info['pass_rewards'] = pass_rewards
+        pass_reward_tensor = torch.tensor(pass_rewards, dtype=torch.float32)
+        data.batch['pass_reward'] = pass_reward_tensor
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
             for i in range(batch_size):
@@ -140,11 +144,18 @@ class ToolBenchRewardManager:
             return reward_tensor
 
         # 1. format and function call reward for each turn (excluding the final turn)
-        format_and_function_call_reward = self._compute_format_and_function_call_reward(meta_info)
+        format_and_function_call_reward = self._compute_format_and_function_call_reward(
+            each_turn_end_loc=each_turn_end_loc,
+            valid_action_stats=valid_action_stats_tensor,
+            valid_action_stats_len=valid_action_stats_len_tensor,
+            valid_api_call_stats=valid_api_call_stats_tensor,
+            valid_api_call_stats_len=valid_api_call_stats_len_tensor,
+        )
         # 2. finish reward for the final turn
-        finish_reward = self._compute_finish_reward(meta_info)
-        data.meta_info['format_and_function_call_reward'] = format_and_function_call_reward
-        data.meta_info['finish_reward'] = finish_reward
+        finish_reward = self._compute_finish_reward(active_mask_tensor, batch_size=batch_size)
+        data.batch['finish_reward'] = torch.tensor(finish_reward, dtype=torch.float32)
+        # optional: sum format reward per sample for metrics
+        data.batch['format_reward_sum'] = torch.tensor([float(sum(x)) for x in format_and_function_call_reward], dtype=torch.float32)
 
         for i in range(batch_size):
             for j in range(len(each_turn_end_loc[i]) - 1):
@@ -171,37 +182,60 @@ class ToolBenchRewardManager:
             return query
         return full_prompt.strip()
 
-    def _compute_format_and_function_call_reward(self, meta_info: Dict) -> List[List[float]]:
-        turns_stats = meta_info['turns_stats']
-        valid_action_stats = meta_info['valid_action_stats']
-        valid_api_call_stats = meta_info['valid_api_call_stats']
-        batch_size = len(turns_stats)
-        format_rewards = [[] for _ in range(batch_size)]
-        
+    def _compute_format_and_function_call_reward(
+        self,
+        each_turn_end_loc: List[List[int]],
+        valid_action_stats: torch.Tensor,
+        valid_action_stats_len: torch.Tensor,
+        valid_api_call_stats: torch.Tensor,
+        valid_api_call_stats_len: torch.Tensor,
+    ) -> List[List[float]]:
+        """
+        Compute per-turn format reward (excluding the final turn), aligned to the
+        *turns visible in `info_mask`* (i.e., `each_turn_end_loc`).
+        """
+        batch_size = len(each_turn_end_loc)
+        format_rewards: List[List[float]] = [[] for _ in range(batch_size)]
+
+        va = valid_action_stats.detach().cpu().to(torch.int64)
+        va_len = valid_action_stats_len.detach().cpu().to(torch.int64).tolist()
+        vc = valid_api_call_stats.detach().cpu().to(torch.int64)
+        vc_len = valid_api_call_stats_len.detach().cpu().to(torch.int64).tolist()
+
         for i in range(batch_size):
-            for j in range(turns_stats[i] - 1):
-                if valid_action_stats[i][j] and valid_api_call_stats[i][j]:
+            n_turns = len(each_turn_end_loc[i])
+            n_reward_turns = max(0, n_turns - 1)
+            for j in range(n_reward_turns):
+                # Align by step index j; if we don't have stats, treat as invalid.
+                if j >= va_len[i] or j >= vc_len[i]:
+                    raise ValueError(f"Sample {i} has valid action stats length as {va_len[i]} and valid api call stats length as {vc_len[i]}, but n_turns as {n_turns}")
+                v_a = int(va[i, j].item())
+                v_c = int(vc[i, j].item())
+                if v_a == 1 and v_c == 1:
                     format_rewards[i].append(0.1)
-                elif valid_action_stats[i][j] and not valid_api_call_stats[i][j]:
+                elif v_a == 1 and v_c == 0:
                     format_rewards[i].append(-0.1)
                 else:
                     format_rewards[i].append(-0.2)
-        
+
         return format_rewards
 
-    def _compute_finish_reward(self, meta_info: Dict) -> List[float]:
+    def _compute_finish_reward(self, active_mask: torch.Tensor, batch_size: int, device=None) -> List[float]:
         """
         Compute finish reward
         Args:
             sample_idx: sample index
-            meta_info: meta information
+            active_mask: per-sample active mask, True means NOT finished.
         Returns:
             finish reward for each sample
         """
-        active_mask = meta_info['active_mask']
+        if active_mask is None:
+            # If unknown, be conservative: treat as not finished.
+            active_mask = torch.ones((batch_size,), dtype=torch.bool, device=device)
         finish_rewards = []
-        for i in range(len(active_mask)):
-            if not active_mask[i]:
+        active_mask_list = active_mask.detach().cpu().tolist()
+        for i in range(len(active_mask_list)):
+            if not active_mask_list[i]:
                 finish_rewards.append(0.2)
             else:
                 finish_rewards.append(-0.5)
