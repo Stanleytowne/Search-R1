@@ -499,14 +499,14 @@ class LLMGenerationManager:
             
         api_calls = []
         api_indices = []
-        for i, (action, content_dict) in enumerate(zip(cur_actions, contents)):
+        for i, (action, action_input) in enumerate(zip(cur_actions, contents)):
             if action and action != 'Finish' and active_mask[i]:
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 api_calls.append({
                     'index': i,  # Active batch index (for api_results mapping)
                     'original_index': original_idx,  # Original batch index (for api_success_history)
                     'action': action,
-                    'content': content_dict
+                    'action_input': action_input
                 })
                 api_indices.append(i)
         
@@ -636,13 +636,10 @@ class LLMGenerationManager:
                             action_input[match.group(1)] = int(match.group(2))
                 
                 actions.append(action_name)
-                contents.append({
-                    'action_name': action_name,
-                    'action_input': action_input
-                })
+                contents.append(action_input)
             else:
                 actions.append(None)
-                contents.append({})
+                contents.append(None)
             
         return actions, contents
     
@@ -736,11 +733,8 @@ class LLMGenerationManager:
         
         for api_call in api_calls:
             idx = api_call['index']
-            action_name_raw = api_call['action']
-            # Normalize API name: convert to lowercase and replace spaces with underscores
-            action_name = normalize_api_name(action_name_raw)
-            content_dict = api_call['content']
-            action_input = content_dict.get('action_input', {})
+            action_name = api_call['action']
+            action_input = api_call['action_input']
             
             # Extract tool_name and api_name from action_name
             # Format in StableToolBench: api_name_for_tool_name (normalized)
