@@ -99,17 +99,17 @@ critic:
     tokenizer_path: ${actor_rollout_ref.model.path}
     override_config: { }
     external_lib: ${actor_rollout_ref.model.external_lib}
-    enable_gradient_checkpointing: False
-    use_remove_padding: False
+    enable_gradient_checkpointing: true
+    use_remove_padding: True
     fsdp_config:
-      param_offload: False
-      grad_offload: False
-      optimizer_offload: False
+      param_offload: true
+      grad_offload: true
+      optimizer_offload: true
       wrap_policy:
         min_num_params: 0
       fsdp_size: -1
   ppo_mini_batch_size: ${actor_rollout_ref.actor.ppo_mini_batch_size}
-  ppo_micro_batch_size: 64
+  ppo_micro_batch_size: 8
   forward_micro_batch_size: ${critic.ppo_micro_batch_size}
   use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}
   ppo_max_token_len_per_gpu: 32768
