@@ -69,8 +69,7 @@ class ToolBenchRewardManager:
 
         all_queries = []
         all_trajectories = []
-        valid_info_list = []
-
+        each_turn_end_loc = [[] for _ in range(batch_size)]
         for i in range(batch_size):
             data_item = data[i]
 
@@ -91,29 +90,66 @@ class ToolBenchRewardManager:
             
             all_queries.append(query_str)
             all_trajectories.append(response_str)
-            valid_info_list.append(valid_response_length)
 
-            # debug output
+            # get the end location of each turn
+            full_info_mask = data_item.batch['info_mask']
+            response_mask = full_info_mask[prompt_length : prompt_length + valid_response_length]
+            
+            mask_list = response_mask.tolist()
+            turn_indices = []
+            
+            for t, is_model_token in enumerate(mask_list):
+                if is_model_token == 1 and (t == len(mask_list) - 1 or mask_list[t + 1] == 0):
+                    turn_indices.append(t)
+            
+            each_turn_end_loc[i] = turn_indices
+
             if i < self.num_examine:
-                print("#" * 30)
-                print("[DEBUG REWARD] PROMPT (valid tokens only):")
-                if valid_prompt_length > 0:
-                    print(prompt_str)
-                else:
-                    print("[DEBUG REWARD] (empty)")
-                print("#" * 30)
-                print("[DEBUG REWARD] Query:")
-                print(query_str)
-                print("#" * 30)
-                print("[DEBUG REWARD] RESPONSE:")
-                print(response_str)
-                # print("#" * 30)
-                # print("[DEBUG REWARD] Trained response:")
-                # info_mask = data_item.batch['info_mask']
-                # info_mask = info_mask[prompt_length:][:valid_response_length]
-                # trained = torch.where(info_mask.bool(), valid_response_ids, self.tokenizer.pad_token_id)
-                # print(self.tokenizer.decode(trained, skip_special_tokens=False))
-                print("#" * 30)
+                print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
+                print(f"Calculated Indices: {each_turn_end_loc[i]}")
+                
+                # 获取用于显示的 token ID 和 mask
+                # 注意：这里我们使用 valid_response_ids，确保只打印有效部分
+                debug_tokens = valid_response_ids.tolist()
+                debug_mask = mask_list  # 沿用上面计算出的 list
+                
+                print("\n[Visualized Response Flow]")
+                print("Legend: [M] = Model Token (Mask=1), [E] = Env Token (Mask=0), 📍 = Reward Location")
+                print("-" * 60)
+                
+                # 逐个 Token 还原并打印，遇到关键位置换行或标记
+                buffer_str = ""
+                current_type = debug_mask[0] if len(debug_mask) > 0 else 1
+                
+                for idx, (tid, is_model) in enumerate(zip(debug_tokens, debug_mask)):
+                    token_str = self.tokenizer.decode([tid], skip_special_tokens=False)
+                    
+                    # 简单处理换行符，防止打印混乱
+                    token_str_repr = token_str.replace('\n', '\\n')
+                    
+                    # 标记是否是 Reward 位置
+                    is_reward_loc = idx in each_turn_end_loc[i]
+                    
+                    # 如果 mask 类型发生变化（从模型->环境 或 环境->模型），先打印之前的 buffer
+                    if is_model != current_type:
+                        prefix = "[Model]: " if current_type == 1 else "[Env]:   "
+                        print(f"{prefix}{buffer_str}")
+                        buffer_str = ""
+                        current_type = is_model
+                    
+                    # 拼接到 buffer
+                    buffer_str += token_str
+                    
+                    # 如果这里是 Reward 位置，插入显眼标记
+                    if is_reward_loc:
+                        buffer_str += " [📍REWARD] "
+                
+                # 打印剩余的 buffer
+                if buffer_str:
+                    prefix = "[Model]: " if current_type == 1 else "[Env]:   "
+                    print(f"{prefix}{buffer_str}")
+                
+                print("="*60 + "\n")
         
         breakpoint()
         
@@ -121,9 +157,11 @@ class ToolBenchRewardManager:
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
             for i in range(batch_size):
-                valid_response_length = valid_info_list[i]
-                if valid_response_length > 0:
-                    reward_tensor[i, valid_response_length - 1] = pass_rewards[i]
+                last_turn_end_loc = each_turn_end_loc[i][-1]
+                reward_tensor[i, last_turn_end_loc] = pass_rewards[i]
+
+                # add pass reward to the data so that it can be shown in the metrics
+                data[i].meta_info['pass_reward'] = pass_rewards[i]
                 
                 if i < self.num_examine:
                     response_str = all_trajectories[i]
@@ -132,55 +170,23 @@ class ToolBenchRewardManager:
                     print(f"  Pass reward: {pass_rewards[i]:.3f}")
             return reward_tensor
 
-        for i in range(batch_size):
-            data_item = data[i]
-            response_str = all_trajectories[i]
-            valid_response_length = valid_info_list[i]
+        # 1. format and function call reward for each turn (excluding the final turn)
+        format_and_function_call_reward = self._compute_format_and_function_call_reward(meta_info)
+        # 2. finish reward for the final turn
+        finish_reward = self._compute_finish_reward(meta_info)
 
-            original_idx = i
-            if hasattr(data_item, 'non_tensor_batch') and data_item.non_tensor_batch and 'index' in data_item.non_tensor_batch:
-                original_idx = int(data_item.non_tensor_batch['index'])
-            elif hasattr(data, 'non_tensor_batch') and data.non_tensor_batch and 'index' in data.non_tensor_batch:
-                if i < len(data.non_tensor_batch['index']):
-                    original_idx = int(data.non_tensor_batch['index'][i])
-            
-            # 1. 格式奖励：检查是否包含正确的格式
-            format_reward = self._compute_format_reward(response_str, valid_response_length)
-            
-            # 2. Function call奖励：从response_str中解析Observation获取API调用结果
-            function_call_reward = self._compute_function_call_reward(
-                response_str, valid_response_length
-            )
-            
-            # 3. Finish reward
-            finish_reward = self._compute_finish_reward(
-                original_idx, meta_info
-            )
-            
-            # 组合reward
-            total_reward = (
-                self.pass_reward_weight * pass_rewards[i] +
-                self.format_reward_weight * format_reward +
-                self.function_call_reward_weight * function_call_reward +
-                self.finish_reward_weight * finish_reward
-            )
-            
-            # 将reward分配到最后一个有效response token
-            # 注意：reward_tensor的形状是(batch_size, response_length)，
-            # 这里的response_length只包含模型生成的response tokens，不包含prompt和observation
-            # observation tokens会被info_mask标记，在训练时被排除
-            if valid_response_length > 0:
-                reward_tensor[i, valid_response_length - 1] = total_reward
+        for i in range(batch_size):
+            for j in range(len(each_turn_end_loc[i]) - 1):
+                reward_tensor[i, each_turn_end_loc[i][j]] = format_and_function_call_reward[i][j]
+            reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i]
             
             # 打印示例（用于调试）
             if i < self.num_examine:
                 print(f"\n[Reward Sample {i}]")
-                print(f"  Response: {response_str[:200]}...")
-                print(f"  Pass reward: {pass_rewards[i]:.3f}")
-                print(f"  Format reward: {format_reward:.3f}")
-                print(f"  Function call reward: {function_call_reward:.3f}")
-                print(f"  Finish reward: {finish_reward:.3f}")
-                print(f"  Total reward: {total_reward:.3f}")
+                print(f"  Response: {all_trajectories[i][:200]}...")
+                print(f"  Pass reward: {pass_rewards[i]}")
+                print(f"  Format reward: {format_and_function_call_reward[i]}")
+                print(f"  Finish reward: {finish_reward[i]}")
         
         return reward_tensor
     
@@ -195,197 +201,41 @@ class ToolBenchRewardManager:
             return query
         return full_prompt.strip()
 
-    def _compute_format_reward(self, response_str: str, response_length: int) -> float:
-        """
-        计算格式奖励
-        检查是否包含Thought/Action/Action Input格式
-        关键：需要对每次API调用（每次Thought/Action/Action Input组合）取平均，
-        防止模型通过重复调用API来获得高奖励
-        """
-        # 解析出所有API调用（每次Thought/Action/Action Input组合）
-        api_calls = self._parse_api_calls(response_str)
+    def _compute_format_and_function_call_reward(self, meta_info: Dict) -> List[List[float]]:
+        turns_stats = meta_info['turns_stats']
+        valid_action_stats = meta_info['valid_action_stats']
+        api_success_history = meta_info['api_success_history']
+        batch_size = len(turns_stats)
+        format_rewards = [[] for _ in range(batch_size)]
         
-        if not api_calls:
-            # 没有找到任何API调用格式
-            return 0.0
+        for i in range(batch_size):
+            for j in range(turns_stats[i] - 1):
+                if valid_action_stats[i][j] and api_success_history[i][j]:
+                    format_rewards[i].append(0.1)
+                elif valid_action_stats[i][j] and not api_success_history[i][j]:
+                    format_rewards[i].append(-0.1)
+                else:
+                    format_rewards[i].append(-0.2)
         
-        # 对每次API调用计算格式奖励，然后取平均
-        format_scores = []
-        for api_call in api_calls:
-            score = self._evaluate_single_api_call_format(api_call)
-            format_scores.append(score)
-        
-        # 取平均值，防止重复调用API获得高奖励
-        avg_score = sum(format_scores) / len(format_scores) if format_scores else 0.0
-        return avg_score
-    
-    def _parse_api_calls(self, response_str: str) -> List[Dict[str, str]]:
-        """
-        解析response_str中的所有API调用（Thought/Action/Action Input组合）
-        
-        Returns:
-            List of dicts, each dict contains 'thought', 'action', 'action_input' fields
-        """
-        api_calls = []
-        
-        # 使用正则表达式查找所有 Thought: ... Action: ... Action Input: ... 的组合
-        # 匹配完整的API调用模式：Thought: ... \nAction: ... \nAction Input: ...
-        # 使用非贪婪匹配，直到下一个Thought:（如果有多个调用）或字符串结束
-        # 注意：需要匹配换行符的不同形式，可能是\n或\n\n
-        pattern = r'Thought:\s*(.*?)\nAction:\s*(.*?)\nAction Input:\s*(.*?)(?=\n+Thought:|$)'
-        matches = re.finditer(pattern, response_str, re.DOTALL)
-        
-        for match in matches:
-            thought_content = match.group(1).strip()
-            action_content = match.group(2).strip()
-            action_input_str = match.group(3).strip()
-            
-            # 检查是否有基本内容
-            if thought_content and action_content and action_input_str:
-                api_calls.append({
-                    'thought': thought_content,
-                    'action': action_content,
-                    'action_input': action_input_str
-                })
-        
-        return api_calls
-    
-    def _evaluate_single_api_call_format(self, api_call: Dict[str, str]) -> float:
-        """
-        评估单个API调用的格式正确性
-        
-        Args:
-            api_call: 包含 'thought', 'action', 'action_input' 的字典
-            
-        Returns:
-            格式奖励分数 (0.0 - 1.0)
-        """
-        thought = api_call.get('thought', '').strip()
-        action = api_call.get('action', '').strip()
-        action_input = api_call.get('action_input', '').strip()
-        
-        # 检查是否有基本的三个部分
-        if not thought or not action or not action_input:
-            return 0.0
-        
-        # 尝试解析Action Input是否为有效JSON
-        try:
-            # 尝试找到JSON对象
-            brace_start = action_input.find('{')
-            if brace_start != -1:
-                # 尝试解析JSON
-                brace_count = 0
-                brace_end = brace_start
-                for j in range(brace_start, min(brace_start + 2000, len(action_input))):
-                    if action_input[j] == '{':
-                        brace_count += 1
-                    elif action_input[j] == '}':
-                        brace_count -= 1
-                        if brace_count == 0:
-                            brace_end = j + 1
-                            break
-                
-                if brace_count == 0:
-                    json_str = action_input[brace_start:brace_end]
-                    try:
-                        json.loads(json_str)
-                        return 1.0  # 完整且有效的格式
-                    except json.JSONDecodeError:
-                        return 0.5  # 格式存在但JSON无效
-        except Exception:
-            pass
-        
-        # 部分格式奖励（有基本格式但JSON可能不完整）
-        return 0.5
-    
-    def _compute_function_call_reward(self, response_str: str, response_length: int) -> float:
-        """
-        计算Function call奖励
-        如果API调用结果有error，则惩罚
-        
-        直接从response_str中解析Observation来获取error信息
-        Observation格式: "Observation: {"error": "...", "response": "..."}"
-        """
-        # 从response_str中解析所有Observation
-        observations = self._parse_observations(response_str)
-        
-        # 计算奖励：每个成功的API调用给奖励，每个错误给惩罚
-        reward = 0.0
-        
-        if observations:
-            for obs_json in observations:
-                has_error = obs_json.get('error', '') != ''
-                if not has_error:  # 如果有error
-                    reward += 1
-            
-            return reward / len(observations)
-        else:
-            # 如果没有API调用或Observation，可能是格式错误或没有调用API
-            # 不给奖励也不给惩罚（中性）
-            return 0.0
+        return format_rewards
 
-    def _parse_observations(self, response_str: str) -> List[Dict]:
-        """
-        从response_str中解析所有Observation
-        
-        Observation格式: "Observation: {"error": "...", "response": "..."}"
-        
-        Returns:
-            List of observation dicts, each containing 'error' and 'response' keys
-        """
-        observations = []
-        
-        # 查找所有 "Observation:" 标签
-        pattern = r'Observation:\s*(\{.*?\})(?=\n|$)'
-        matches = re.finditer(pattern, response_str, re.DOTALL)
-        
-        for match in matches:
-            json_str = match.group(1).strip()
-            try:
-                # 尝试解析JSON（需要正确匹配大括号）
-                # 找到第一个 {，然后匹配到对应的 }
-                brace_start = json_str.find('{')
-                if brace_start != -1:
-                    brace_count = 0
-                    brace_end = brace_start
-                    for j in range(brace_start, min(brace_start + 5000, len(json_str))):
-                        if json_str[j] == '{':
-                            brace_count += 1
-                        elif json_str[j] == '}':
-                            brace_count -= 1
-                            if brace_count == 0:
-                                brace_end = j + 1
-                                break
-                    
-                    if brace_count == 0:
-                        complete_json_str = json_str[brace_start:brace_end]
-                        obs_dict = json.loads(complete_json_str)
-                        # 确保有error字段
-                        if 'error' in obs_dict:
-                            observations.append({
-                                'error': obs_dict.get('error', ''),
-                                'response': obs_dict.get('response', '')
-                            })
-            except (json.JSONDecodeError, ValueError):
-                # JSON解析失败，跳过这个observation
-                continue
-        
-        return observations
-    
-    def _compute_finish_reward(self, sample_idx: int, meta_info: Dict) -> float:
+    def _compute_finish_reward(self, meta_info: Dict) -> List[float]:
         """
         Compute finish reward
         Args:
             sample_idx: sample index
             meta_info: meta information
         Returns:
-            finish reward
+            finish reward for each sample
         """
-        finish_called = meta_info.get('finish_called', {})
-        if sample_idx in finish_called and finish_called[sample_idx] is not None:
-            return int(finish_called[sample_idx])
-        
-        return 0.0
+        finish_called = meta_info['finish_called']
+        finish_rewards = []
+        for i in range(len(finish_called)):
+            if finish_called[i]:
+                finish_rewards.append(0.2)
+            else:
+                finish_rewards.append(-0.5)
+        return finish_rewards
 
     def _get_remote_pass_rewards(self, queries: List[str], trajectories: List[str]) -> List[float]:
         """通过 HTTP 调用远程 Reward Server"""
