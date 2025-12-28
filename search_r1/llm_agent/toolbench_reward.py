@@ -162,6 +162,11 @@ class ToolBenchRewardManager:
         data.meta_info['finish_reward'] = finish_reward
 
         for i in range(batch_size):
+            if len(each_turn_end_loc[i]) != len(format_and_function_call_reward[i]) + 1:
+                print(f"Sample {i} has each_turn_end_loc as {each_turn_end_loc[i]} and format_and_function_call_reward as {format_and_function_call_reward[i]}")
+                print(f"Sample {i}: {all_trajectories[i]}")
+                raise ValueError()
+
             for j in range(len(each_turn_end_loc[i]) - 1):
                 reward_tensor[i, each_turn_end_loc[i][j]] = format_and_function_call_reward[i][j]
             reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i]
@@ -194,7 +199,7 @@ class ToolBenchRewardManager:
         format_rewards = [[] for _ in range(batch_size)]
         
         for i in range(batch_size):
-            if len(valid_action_stats[i]) != len(api_success_history[i]):
+            if len(valid_action_stats[i]) != len(api_success_history[i]) + 1:
                 print(f"Sample {i} has valid action as {valid_action_stats[i]} and api success history as {api_success_history[i]}")
                 print(f"Sample {i} has Turns stats: {turns_stats[i]}")
 

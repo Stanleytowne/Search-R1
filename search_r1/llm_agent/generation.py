@@ -122,8 +122,6 @@ class LLMGenerationManager:
             resp = resp.rstrip()
 
             if resp.find('\nObservation: {') != -1:
-                print("[WARNING] Model tries to fake an observation, which is not allowed.")
-                print(resp)
                 resp = resp.split('\nObservation:')[0]
                 resp = resp.rstrip()
             
