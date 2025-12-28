@@ -263,25 +263,17 @@ def compute_data_metrics(batch, use_critic=True):
     }
 
     # metrics for actions
-    # Prefer per-sample tensors stored in batch (reliably aligned).
-    if batch.batch is not None and 'turns_stats' in batch.batch.keys():
-        turns_stats = batch.batch['turns_stats'].detach().cpu().numpy().astype(np.int16)
-        metrics['env/number_of_actions/mean'] = float(turns_stats.mean())
-        metrics['env/number_of_actions/max'] = float(turns_stats.max())
-        metrics['env/number_of_actions/min'] = float(turns_stats.min())
-
-    if batch.batch is not None and 'active_mask' in batch.batch.keys():
-        active_mask = batch.batch['active_mask'].detach().cpu().numpy().astype(np.int16)
-        metrics['env/finish_ratio'] = 1 - float(active_mask.mean())
-
-    if batch.batch is not None and 'valid_action_stats' in batch.batch.keys() and 'valid_action_stats_len' in batch.batch.keys():
-        va = batch.batch['valid_action_stats'].detach().cpu().numpy().astype(np.int16)
-        va_len = batch.batch['valid_action_stats_len'].detach().cpu().numpy().astype(np.int16)
-        valid_action_sum = np.array([int(va[i, :va_len[i]].sum()) for i in range(va.shape[0])], dtype=np.int16)
-        metrics['env/number_of_valid_action'] = float(valid_action_sum.mean())
-        if 'turns_stats' in batch.batch.keys():
-            turns_stats = batch.batch['turns_stats'].detach().cpu().numpy().astype(np.int16)
-            metrics['env/ratio_of_valid_action'] = float((valid_action_sum / turns_stats).mean())
+    if 'turns_stats' in batch.meta_info:
+        metrics['env/number_of_actions/mean'] = float(np.array(batch.meta_info['turns_stats'], dtype=np.int16).mean())
+        metrics['env/number_of_actions/max'] = float(np.array(batch.meta_info['turns_stats'], dtype=np.int16).max())
+        metrics['env/number_of_actions/min'] = float(np.array(batch.meta_info['turns_stats'], dtype=np.int16).min())
+    if 'active_mask' in batch.meta_info:
+        metrics['env/finish_ratio'] = 1 - float(np.array(batch.meta_info['active_mask'], dtype=np.int16).mean())
+    if 'valid_action_stats' in batch.meta_info:
+        valid_action_stats = batch.meta_info['valid_action_stats']
+        valid_action_stats = np.array([sum(valid) for valid in valid_action_stats], dtype=np.int16)
+        metrics['env/number_of_valid_action'] = float(valid_action_stats.mean())
+        metrics['env/ratio_of_valid_action'] = float((valid_action_stats / np.array(batch.meta_info['turns_stats'], dtype=np.int16)).mean())
 
     # reward components (from batch, reliably aligned)
     if batch.batch is not None and 'pass_reward' in batch.batch.keys():
@@ -785,8 +777,8 @@ class RayPPOTrainer(object):
                     # Please take care when you implement group based adv computation such as GRPO and rloo
                     self._balance_batch(batch, metrics=metrics)
 
-                    # compute global_valid tokens (per-sample, keep in batch for reliable alignment)
-                    batch.batch['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1)
+                    # compute global_valid tokens
+                    batch.meta_info['global_token_num'] = torch.sum(batch.batch['attention_mask'], dim=-1).tolist()
 
                     # batch.batch.apply(lambda x, key: x.long() if key != "old_log_probs" else x, inplace=True, key=True)
                     for key in batch.batch.keys():

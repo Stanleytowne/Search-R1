@@ -200,6 +200,7 @@ class LLMGenerationManager:
             'position_ids': new_position_ids[:, -max_len:],
             'attention_mask': new_attention_mask[:, -max_len:]
         })
+        new_rollings.meta_info.update(rollings.meta_info)
         
         return new_rollings
 
@@ -290,6 +291,16 @@ class LLMGenerationManager:
         # Remove padding from output
         trimmed_batch = {k: v[:-padding_size] for k, v in padded_output.batch.items()}
         
+        # Handle meta_info if present
+        if hasattr(padded_output, 'meta_info') and padded_output.meta_info:
+            trimmed_meta = {}
+            for k, v in padded_output.meta_info.items():
+                if isinstance(v, torch.Tensor):
+                    trimmed_meta[k] = v[:-padding_size]
+                else:
+                    trimmed_meta[k] = v
+            padded_output.meta_info = trimmed_meta
+
         padded_output.batch = trimmed_batch
         return padded_output
 
@@ -422,6 +433,9 @@ class LLMGenerationManager:
                 responses_ids,
             )
         
+        gen_output.meta_info['turns_stats'] = turns_stats.tolist()
+        gen_output.meta_info['active_mask'] = active_mask.tolist()
+        
         # IMPORTANT:
         # DataProto 的 per-sample 信息必须写入 batch/non_tensor_batch（与样本索引天然对齐）。
         # For per-sample bookkeeping, always write to `batch` (tensor) or `non_tensor_batch` (np.object array).
@@ -432,10 +446,11 @@ class LLMGenerationManager:
             'valid_api_call_stats': valid_api_call_stats,
         }
 
-        return self._compose_final_output(original_left_side, original_right_side, per_sample_info)
+        return self._compose_final_output(original_left_side, original_right_side, gen_output.meta_info, per_sample_info)
 
     def _compose_final_output(self, left_side: Dict,
                             right_side: Dict,
+                            meta_info: Dict,
                             per_sample_info: Dict) -> Tuple[Dict, Dict]:
         """Compose final generation output."""
         final_output = right_side.copy()
@@ -498,6 +513,7 @@ class LLMGenerationManager:
         final_output['valid_api_call_stats_len'] = vc_len
         
         final_output = DataProto.from_dict(final_output)
+        final_output.meta_info.update(meta_info)
         
         return final_output
 
