@@ -1,9 +1,8 @@
 """
-ToolBench模式的Reward计算
-包括：
-1. 格式奖励：奖励模型生成正确的格式（Thought/Action/Action Input）
-2. Function call正确奖励：如果API调用结果有error，则惩罚
-3. Finish调用奖励：最后一次是否调用Finish
+ToolBench reward manager
+1. format and function call reward for each turn (excluding the final turn)
+2. finish reward for the final turn
+3. pass reward for the final turn
 """
 
 import torch
@@ -15,46 +14,31 @@ from verl import DataProto
 
 
 class ToolBenchRewardManager:
-    """ToolBench模式的Reward管理器"""
-    
+
     def __init__(
         self,
         tokenizer,
         num_examine: int = 0,
         reward_server_url: str = "http://localhost:8000/evaluate_batch"
     ):
-        """
-        Args:
-            tokenizer: Tokenizer用于解码
-            num_examine: 打印的样本数量
-        """
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_server_url = reward_server_url
     
     def __call__(self, data: DataProto) -> torch.Tensor:
-        """
-        计算ToolBench模式的reward
-        
-        Args:
-            data: DataProto包含生成的数据和meta_info
-            
-        Returns:
-            token_level_rewards: (batch_size, response_length)的reward tensor
-        """
         # if 'rm_scores' in data.batch.keys(), return the rm_scores
         if 'rm_scores' in data.batch.keys():
             return data.batch['rm_scores']
         
         batch_size = data.batch['responses'].shape[0]
         response_length = data.batch['responses'].shape[1]
-        
         # init reward tensor
         reward_tensor = torch.zeros((batch_size, response_length), dtype=torch.float32)
         
         # get ToolBench related information from meta_info
         meta_info = data.meta_info
 
+        # get all queries, trajectories and each turn end locations
         all_queries = []
         all_trajectories = []
         each_turn_end_loc = [[] for _ in range(batch_size)]
@@ -214,10 +198,10 @@ class ToolBenchRewardManager:
         Returns:
             finish reward for each sample
         """
-        finish_called = meta_info['finish_called']
+        active_mask = meta_info['active_mask']
         finish_rewards = []
-        for i in range(len(finish_called)):
-            if finish_called[i]:
+        for i in range(len(active_mask)):
+            if not active_mask[i]:
                 finish_rewards.append(0.2)
             else:
                 finish_rewards.append(-0.5)

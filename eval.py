@@ -64,6 +64,7 @@ class SimpleActorRolloutWrapper:
             max_tokens=self.max_new_tokens,
             stop_token_ids=[self.tokenizer.eos_token_id] if self.tokenizer.eos_token_id is not None else None,
             min_tokens=5,
+            stop=["Observation: {"],
         )
         
         # Generate using vLLM

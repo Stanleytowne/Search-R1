@@ -441,7 +441,6 @@ class LLMGenerationManager:
         meta_info['active_mask'] = active_mask.tolist()
         meta_info['valid_action_stats'] = valid_action_stats
         meta_info['valid_api_call_stats'] = valid_api_call_stats
-        meta_info['finish_called'] = [not active for active in active_mask.tolist()]
         
         return self._compose_final_output(original_left_side, original_right_side, meta_info)
 
