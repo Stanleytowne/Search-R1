@@ -91,6 +91,7 @@ class ToolBenchRewardManager:
                     turn_indices.append(t)
             
             each_turn_end_loc[i] = turn_indices
+            assert len(each_turn_end_loc[i]) == meta_info['turns_stats'][i], f"Sample {i} has turns stats as {meta_info['turns_stats'][i]} and each turn end loc as {each_turn_end_loc[i]}"
 
             if i < self.num_examine:
                 print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
@@ -162,11 +163,6 @@ class ToolBenchRewardManager:
         data.meta_info['finish_reward'] = finish_reward
 
         for i in range(batch_size):
-            if len(each_turn_end_loc[i]) != len(format_and_function_call_reward[i]) + 1:
-                print(f"Sample {i} has each_turn_end_loc as {each_turn_end_loc[i]} and format_and_function_call_reward as {format_and_function_call_reward[i]}")
-                print(f"Sample {i}: {all_trajectories[i]}")
-                raise ValueError()
-
             for j in range(len(each_turn_end_loc[i]) - 1):
                 reward_tensor[i, each_turn_end_loc[i][j]] = format_and_function_call_reward[i][j]
             reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i]
@@ -194,19 +190,15 @@ class ToolBenchRewardManager:
     def _compute_format_and_function_call_reward(self, meta_info: Dict) -> List[List[float]]:
         turns_stats = meta_info['turns_stats']
         valid_action_stats = meta_info['valid_action_stats']
-        api_success_history = meta_info['api_success_history']
+        valid_api_call_stats = meta_info['valid_api_call_stats']
         batch_size = len(turns_stats)
         format_rewards = [[] for _ in range(batch_size)]
         
         for i in range(batch_size):
-            if len(valid_action_stats[i]) != len(api_success_history[i]) + 1:
-                print(f"Sample {i} has valid action as {valid_action_stats[i]} and api success history as {api_success_history[i]}")
-                print(f"Sample {i} has Turns stats: {turns_stats[i]}")
-
-            for j in range(min(turns_stats[i] - 1, len(api_success_history[i]))):
-                if valid_action_stats[i][j] and api_success_history[i][j]:
+            for j in range(turns_stats[i] - 1):
+                if valid_action_stats[i][j] and valid_api_call_stats[i][j]:
                     format_rewards[i].append(0.1)
-                elif valid_action_stats[i][j] and not api_success_history[i][j]:
+                elif valid_action_stats[i][j] and not valid_api_call_stats[i][j]:
                     format_rewards[i].append(-0.1)
                 else:
                     format_rewards[i].append(-0.2)

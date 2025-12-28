@@ -65,12 +65,6 @@ class LLMGenerationManager:
             max_obs_length=config.max_obs_length,
             max_start_length=config.max_start_length
         ))
-        
-        # Track API calls and Finish calls for reward computation
-        # Format: {sample_idx: [True, False, ...]}
-        self.api_success_history = []
-        # Format: {sample_idx: True | False}
-        self.finish_call_history = []
 
         # =========================================================================
         # [网络优化] 初始化持久化 HTTP 客户端
@@ -121,6 +115,7 @@ class LLMGenerationManager:
         for resp in responses_str:
             resp = resp.rstrip()
 
+            # If the model tried to generate a fake observation, remove it
             if resp.find('\nObservation: {') != -1:
                 resp = resp.split('\nObservation:')[0]
                 resp = resp.rstrip()
@@ -311,7 +306,6 @@ class LLMGenerationManager:
 
     def run_llm_loop(self, gen_batch, initial_input_ids: torch.Tensor) -> Tuple[Dict, Dict]:
         """Run main LLM generation loop."""
-        
         original_left_side = {'input_ids': initial_input_ids[:, -self.config.max_start_length:]}
         original_right_side = {'responses': initial_input_ids[:, []], 'responses_with_info_mask': initial_input_ids[:, []]}
         
@@ -322,18 +316,17 @@ class LLMGenerationManager:
         # valid_action_stats = torch.zeros(batch_size, dtype=torch.int)
         # valid_action_stats is a list of lists, each list is a list of valid actions for a sample
         valid_action_stats = [[] for _ in range(batch_size)]
-        active_num_list = [active_mask.sum().item()]
+        valid_api_call_stats = [[] for _ in range(batch_size)]
+        
         rollings = gen_batch
         
         # 1. Initialize ToolBench related variables: api_name, category, etc.
-        
-        self.api_success_history = [[] for _ in range(batch_size)]
-        self.finish_call_history = [False for _ in range(batch_size)]
         # Extract category and API list from extra_info for each sample
         self.sample_categories = {}
         self.sample_api_lists = {}  # Store API validation info for each sample
         
         # Get extra_info from non_tensor_batch or meta_info
+        breakpoint()
         extra_info = None
         if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
             extra_info = gen_batch.non_tensor_batch['extra_info']
@@ -341,9 +334,6 @@ class LLMGenerationManager:
             extra_info = gen_batch.meta_info['extra_info']
         else:
             raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
-        
-        if not isinstance(extra_info, (list, tuple, np.ndarray)) or len(extra_info) != batch_size:
-            raise ValueError(f"Invalid extra_info: expected list/tuple/array of length {batch_size}, got {type(extra_info)} with length {len(extra_info) if hasattr(extra_info, '__len__') else 'N/A'}")
         
         # Extract category and API info for each sample
         for i, info in enumerate(extra_info):
@@ -392,20 +382,16 @@ class LLMGenerationManager:
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
             # Execute in environment and process observations
-            # Map active indices back to original batch indices for API call tracking
-            active_indices = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
-            next_obs, dones, valid_action = self.execute_predictions(
-                responses_str, active_mask, original_indices=active_indices
-            )
+            next_obs, dones, valid_action, valid_api_call = self.execute_predictions(responses_str, active_mask)
             
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
-            active_num_list.append(active_mask.sum().item())
             turns_stats[curr_active_mask] += 1
             # valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
             for i, valid in enumerate(valid_action):
                 valid_action_stats[i].append(valid)
-
+            for i, valid in enumerate(valid_api_call):
+                valid_api_call_stats[i].append(valid)
             next_obs_ids = self._process_next_obs(next_obs, last=step==self.config.max_turns-1, active_mask=active_mask)
             
             # Update states
@@ -442,20 +428,16 @@ class LLMGenerationManager:
             
             responses_ids, responses_str = self.tensor_fn._example_level_pad(responses_ids, responses_str, active_mask)
 
-            # # Execute in environment and process observations
-            # Map active indices back to original batch indices
-            active_indices_final = torch.where(active_mask)[0].tolist() if isinstance(active_mask, torch.Tensor) else [i for i, active in enumerate(active_mask) if active]
-            _, dones, valid_action = self.execute_predictions(
-                responses_str, active_mask, original_indices=active_indices_final
-            )
+            # Execute in environment and process observations
+            _, dones, valid_action, valid_api_call = self.execute_predictions(responses_str, active_mask)
 
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
-            active_num_list.append(active_mask.sum().item())
             # valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
             for i, valid in enumerate(valid_action):
                 valid_action_stats[i].append(valid)
-            
+            for i, valid in enumerate(valid_api_call):
+                valid_api_call_stats[i].append(valid)
 
             original_right_side = self._update_right_side(
                 original_right_side,
@@ -465,12 +447,8 @@ class LLMGenerationManager:
         meta_info['turns_stats'] = turns_stats.tolist()
         meta_info['active_mask'] = active_mask.tolist()
         meta_info['valid_action_stats'] = valid_action_stats
-        
-        # Add ToolBench reward computation info
-        meta_info['api_success_history'] = self.api_success_history
-        meta_info['finish_called'] = self.finish_call_history
-        
-        print("ACTIVE_TRAJ_NUM:", active_num_list)
+        meta_info['valid_api_call_stats'] = valid_api_call_stats
+        meta_info['finish_called'] = [not active for active in active_mask.tolist()]
         
         return self._compose_final_output(original_left_side, original_right_side, meta_info)
 
@@ -506,7 +484,7 @@ class LLMGenerationManager:
         
         return final_output
 
-    def execute_predictions(self, predictions: List[str], active_mask=None, original_indices=None) -> List[str]:
+    def execute_predictions(self, predictions: List[str], active_mask) -> List[str]:
         """
         Execute predictions across multiple environments.
         NOTE: the function is the actual `step` function in the environment
@@ -518,31 +496,17 @@ class LLMGenerationManager:
             original_indices: List of original batch indices (for mapping active batch indices back to original)
             
         Returns:
-            Tuple of (next_obs, dones, valid_action)
+            Tuple of (next_obs, dones, valid_action, valid_api_call)
         """
         cur_actions, contents = self.postprocess_predictions(predictions)
-        next_obs, dones, valid_action = [], [], []
+        next_obs, dones, valid_action, valid_api_call = [], [], [], []
         
-        # Handle None active_mask
-        if active_mask is None:
-            active_mask = [True] * len(predictions)
-        elif isinstance(active_mask, torch.Tensor):
-            active_mask = active_mask.tolist()
-        
-        assert len(predictions) == len(active_mask), f"predictions length {len(predictions)} != active_mask length {len(active_mask)}"
-        
-        # Map active batch indices to original batch indices
-        if original_indices is None:
-            original_indices = list(range(len(predictions)))
-            
         api_calls = []
         api_indices = []
         for i, (action, action_input) in enumerate(zip(cur_actions, contents)):
             if action and action != 'finish' and active_mask[i]:
-                original_idx = original_indices[i] if i < len(original_indices) else i
                 api_calls.append({
-                    'index': i,  # Active batch index (for api_results mapping)
-                    'original_index': original_idx,  # Original batch index (for api_success_history)
+                    'index': i,
                     'action': action,
                     'action_input': action_input
                 })
@@ -555,23 +519,16 @@ class LLMGenerationManager:
         
         # Process results
         for i, (action, content_dict, active) in enumerate(zip(cur_actions, contents, active_mask)):
-            original_idx = original_indices[i] if i < len(original_indices) else i
             if not active:
                 next_obs.append('')
                 dones.append(1)
                 valid_action.append(0)
-            elif action == 'finish':
-                # Use original batch index
-                original_idx = original_indices[i] if i < len(original_indices) else i
-                if isinstance(content_dict, dict) and 'final_answer' in content_dict:
-                    # Track Finish call for reward computation
-                    self.finish_call_history[original_idx] = True
-                else:
-                    # Finish call is invalid
-                    self.finish_call_history[original_idx] = False
+                valid_api_call.append(0)
+            elif action == 'finish' and isinstance(content_dict, dict) and 'final_answer' in content_dict:
                 next_obs.append('')
                 dones.append(1)
                 valid_action.append(1)
+                valid_api_call.append(1)
             elif action and i in api_results:
                 # API call succeeded
                 result = api_results[i]
@@ -579,9 +536,8 @@ class LLMGenerationManager:
                 response = result.get('response', '')
                 
                 # Track API call result for reward computation
-                # Use original batch index for api_success_history
                 has_error = bool(error and error.strip())
-                self.api_success_history[original_idx].append(not has_error)
+                valid_api_call.append(1 if not has_error else 0)
                 
                 # Format as function response (matching StableToolBench format)
                 # In StableToolBench, function response format is: "Observation: {json_string}\n"
@@ -591,20 +547,20 @@ class LLMGenerationManager:
                 next_obs.append(f"\n\nObservation: {function_response_json}\n\n")
                 dones.append(0)
                 valid_action.append(1)
-            elif action:
-                # Invalid API call or parsing error
-                next_obs.append('\n\nMy previous action is invalid. Let me check the Action and Action Input format and try again.\n\n')
+            elif action == 'finish':
+                # invalid finish call
+                next_obs.append('\n\nI called "Finish" but the final answer is not provided. Let me check the Action Input format and try again.\n\n')
                 dones.append(0)
-                valid_action.append(0)
-                self.api_success_history[original_idx].append(False)
+                valid_action.append(1)
+                valid_api_call.append(0)
             else:
                 # No action detected
                 next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
                 dones.append(0)
                 valid_action.append(0)
-                self.api_success_history[original_idx].append(False)
+                valid_api_call.append(0)
             
-        return next_obs, dones, valid_action
+        return next_obs, dones, valid_action, valid_api_call
 
     def postprocess_predictions(self, predictions: List[Any]) -> Tuple[List[str], List[Dict]]:
         """
@@ -785,16 +741,11 @@ class LLMGenerationManager:
             else:
                 tool_name = 'unknown'
             
-            # Extract category from sample's extra_info
-            # Map original_index to category
-            original_idx = api_call.get('original_index', idx)
-            if not hasattr(self, 'sample_categories') or original_idx not in self.sample_categories:
-                raise ValueError(f'Missing category for sample {original_idx}.')
-            
-            category = self.sample_categories[original_idx]
+            # Extract category from sample's extra_info            
+            category = self.sample_categories[idx]
             
             # Validate API call before sending to server
-            validation_error = self._validate_api_call(action_name, action_input, original_idx)
+            validation_error = self._validate_api_call(action_name, action_input, idx)
             if validation_error:
                 results[idx] = {
                     'error': validation_error,
