@@ -71,9 +71,9 @@ class LLMGenerationManager:
         
         # Track API calls and Finish calls for reward computation
         # Format: {sample_idx: [True, False, ...]}
-        self.api_success_history = {}
+        self.api_success_history = []
         # Format: {sample_idx: True | False}
-        self.finish_call_history = {}
+        self.finish_call_history = []
 
         # =========================================================================
         # [网络优化] 初始化持久化 HTTP 客户端
@@ -112,25 +112,12 @@ class LLMGenerationManager:
         )['input_ids']
 
     def _postprocess_responses(self, responses: torch.Tensor) -> torch.Tensor:
-        """Process responses to stop at search operation or answer operation or function call."""
+        """remove the eos token from the responses"""
         responses_str = self.tokenizer.batch_decode(
             responses, 
             skip_special_tokens=True
-        )
-
-        # For ToolBench format, stop at Action Input (complete JSON) or end of response
-        # Format: Thought: ...\nAction: ...\nAction Input: {...}
-        processed_responses = []
-        for resp in responses_str:
-            # Remove eos_token if present at the end of the sequence
-            eos_token = self.tokenizer.eos_token if hasattr(self.tokenizer, 'eos_token') and self.tokenizer.eos_token is not None else '</s>'
-            resp = resp.rstrip()
-            if resp.endswith(eos_token):
-                resp = resp[:-len(eos_token)].rstrip()
-            processed_responses.append(resp)
-        
-        responses_str = processed_responses
-        responses = self._batch_tokenize(processed_responses)
+        )        
+        responses = self._batch_tokenize(responses_str)
         return responses, responses_str
 
     def _process_next_obs(self, next_obs: List[str], last: bool = False, active_mask: torch.Tensor = None) -> torch.Tensor:
@@ -301,8 +288,8 @@ class LLMGenerationManager:
         
         # 1. Initialize ToolBench related variables: api_name, category, etc.
         
-        self.api_success_history = {i: [] for i in range(batch_size)}
-        self.finish_call_history = {i: None for i in range(batch_size)}
+        self.api_success_history = [[] for _ in range(batch_size)]
+        self.finish_call_history = [False for _ in range(batch_size)]
         # Extract category and API list from extra_info for each sample
         self.sample_categories = {}
         self.sample_api_lists = {}  # Store API validation info for each sample
@@ -441,8 +428,9 @@ class LLMGenerationManager:
         meta_info['valid_action_stats'] = valid_action_stats
         
         # Add ToolBench reward computation info
-        meta_info['api_success_history'] = self.api_success_history.copy()
-        meta_info['finish_called'] = self.finish_call_history.copy()
+        # meta_info['api_success_history'] = self.api_success_history.copy()
+        meta_info['api_success_history'] = self.api_success_history
+        meta_info['finish_called'] = self.finish_call_history
         
         print("ACTIVE_TRAJ_NUM:", active_num_list)
         
@@ -535,6 +523,7 @@ class LLMGenerationManager:
                 dones.append(1)
                 valid_action.append(0)
             elif action == 'Finish':
+                breakpoint()
                 # Use original batch index
                 original_idx = original_indices[i] if i < len(original_indices) else i
                 if isinstance(content_dict, dict) and 'final_answer' in content_dict:
