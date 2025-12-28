@@ -486,31 +486,12 @@ class LLMGenerationManager:
         # 2) variable-length lists -> padded tensors into `batch` (plus lengths)
         valid_action_stats = per_sample_info['valid_action_stats']
         valid_api_call_stats = per_sample_info['valid_api_call_stats']
-        bsz = int(turns_stats.shape[0])
-        max_steps = 0
-        for i in range(bsz):
-            max_steps = max(max_steps, len(valid_action_stats[i]), len(valid_api_call_stats[i]))
 
-        # Use -1 as PAD so downstream can ignore padding safely.
-        va = torch.full((bsz, max_steps), -1, dtype=torch.int8, device=turns_stats.device)
-        vc = torch.full((bsz, max_steps), -1, dtype=torch.int8, device=turns_stats.device)
-        va_len = torch.zeros((bsz,), dtype=torch.int64, device=turns_stats.device)
-        vc_len = torch.zeros((bsz,), dtype=torch.int64, device=turns_stats.device)
-
-        for i in range(bsz):
-            a_i = valid_action_stats[i]
-            c_i = valid_api_call_stats[i]
-            va_len[i] = len(a_i)
-            vc_len[i] = len(c_i)
-            if len(a_i) > 0:
-                va[i, :len(a_i)] = torch.tensor(a_i, dtype=torch.int8, device=turns_stats.device)
-            if len(c_i) > 0:
-                vc[i, :len(c_i)] = torch.tensor(c_i, dtype=torch.int8, device=turns_stats.device)
+        va = torch.tensor(valid_action_stats, dtype=torch.int8, device=turns_stats.device)
+        vc = torch.tensor(valid_api_call_stats, dtype=torch.int8, device=turns_stats.device)
 
         final_output['valid_action_stats'] = va
-        final_output['valid_action_stats_len'] = va_len
         final_output['valid_api_call_stats'] = vc
-        final_output['valid_api_call_stats_len'] = vc_len
         
         final_output = DataProto.from_dict(final_output)
         final_output.meta_info.update(meta_info)

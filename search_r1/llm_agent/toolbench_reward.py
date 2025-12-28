@@ -33,8 +33,6 @@ class ToolBenchRewardManager:
         n_turns_from_info_mask: int,
         response_str: str,
         turns_stats_tensor: torch.Tensor = None,
-        valid_action_stats_len_tensor: torch.Tensor = None,
-        valid_api_call_stats_len_tensor: torch.Tensor = None,
     ) -> None:
         """
         验证 turn 数是否一致：
@@ -43,23 +41,13 @@ class ToolBenchRewardManager:
         - valid_*_stats_len（每次 execute_predictions 都会 append，包含最终 forced finish）
         """
         turns_stats_i = int(turns_stats_tensor[sample_idx].item()) if turns_stats_tensor is not None else None
-        va_len_i = int(valid_action_stats_len_tensor[sample_idx].item()) if valid_action_stats_len_tensor is not None else None
-        vc_len_i = int(valid_api_call_stats_len_tensor[sample_idx].item()) if valid_api_call_stats_len_tensor is not None else None
 
         problems = []
-
-        # Most reliable: stats_len should equal actual executed turns in trajectory,
-        # which should match info_mask-derived turns.
-        if va_len_i is not None and n_turns_from_info_mask != va_len_i:
-            problems.append(f"info_mask_turns({n_turns_from_info_mask}) != valid_action_stats_len({va_len_i})")
-
-        if vc_len_i is not None and va_len_i is not None and vc_len_i != va_len_i:
-            problems.append(f"valid_api_call_stats_len({vc_len_i}) != valid_action_stats_len({va_len_i})")
 
         # turns_stats is expected to be either equal to executed turns, or 1 smaller when a final forced-finish
         # rollout happened (because turns_stats isn't incremented in the final rollout block).
         if turns_stats_i is not None:
-            ok = (n_turns_from_info_mask == turns_stats_i) or (n_turns_from_info_mask == turns_stats_i + 1)
+            ok = (n_turns_from_info_mask == turns_stats_i)
             if not ok:
                 problems.append(
                     f"info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}"
@@ -70,10 +58,8 @@ class ToolBenchRewardManager:
                 f"[TURN CHECK FAILED] sample={sample_idx} "
                 f"info_mask_turns={n_turns_from_info_mask}, "
                 f"turns_stats={turns_stats_i}, "
-                f"valid_action_stats_len={va_len_i}, "
-                f"valid_api_call_stats_len={vc_len_i}\n"
                 f"Problems: {', '.join(problems)}\n"
-                f"response(head 800 chars): {response_str[:800]}"
+                f"response: {response_str}"
             )
             if self.strict_turn_check:
                 raise AssertionError(msg)
@@ -94,9 +80,7 @@ class ToolBenchRewardManager:
         active_mask_tensor = data.batch.get('active_mask', None)
         turns_stats_tensor = data.batch.get('turns_stats', None)
         valid_action_stats_tensor = data.batch.get('valid_action_stats', None)
-        valid_action_stats_len_tensor = data.batch.get('valid_action_stats_len', None)
         valid_api_call_stats_tensor = data.batch.get('valid_api_call_stats', None)
-        valid_api_call_stats_len_tensor = data.batch.get('valid_api_call_stats_len', None)
 
         # get all queries, trajectories and each turn end locations
         all_queries = []
@@ -142,13 +126,14 @@ class ToolBenchRewardManager:
                 n_turns_from_info_mask=len(turn_indices),
                 response_str=response_str,
                 turns_stats_tensor=turns_stats_tensor,
-                valid_action_stats_len_tensor=valid_action_stats_len_tensor,
-                valid_api_call_stats_len_tensor=valid_api_call_stats_len_tensor,
             )
 
             if i < self.num_examine:
                 print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
                 print(f"Calculated Indices: {each_turn_end_loc[i]}")
+                print(f"Turn stats: {turns_stats_tensor[i]}")
+                print(f"Valid action stats: {valid_action_stats_tensor[i]}")
+                print(f"Valid api call stats: {valid_api_call_stats_tensor[i]}")
                 
                 # 获取用于显示的 token ID 和 mask
                 # 注意：这里我们使用 valid_response_ids，确保只打印有效部分
@@ -165,9 +150,6 @@ class ToolBenchRewardManager:
                 
                 for idx, (tid, is_model) in enumerate(zip(debug_tokens, debug_mask)):
                     token_str = self.tokenizer.decode([tid], skip_special_tokens=False)
-                    
-                    # 简单处理换行符，防止打印混乱
-                    token_str_repr = token_str.replace('\n', '\\n')
                     
                     # 标记是否是 Reward 位置
                     is_reward_loc = idx in each_turn_end_loc[i]
@@ -213,9 +195,7 @@ class ToolBenchRewardManager:
         format_and_function_call_reward = self._compute_format_and_function_call_reward(
             each_turn_end_loc=each_turn_end_loc,
             valid_action_stats=valid_action_stats_tensor,
-            valid_action_stats_len=valid_action_stats_len_tensor,
             valid_api_call_stats=valid_api_call_stats_tensor,
-            valid_api_call_stats_len=valid_api_call_stats_len_tensor,
         )
         # 2. finish reward for the final turn
         finish_reward = self._compute_finish_reward(active_mask_tensor, batch_size=batch_size)
@@ -252,9 +232,7 @@ class ToolBenchRewardManager:
         self,
         each_turn_end_loc: List[List[int]],
         valid_action_stats: torch.Tensor,
-        valid_action_stats_len: torch.Tensor,
         valid_api_call_stats: torch.Tensor,
-        valid_api_call_stats_len: torch.Tensor,
     ) -> List[List[float]]:
         """
         Compute per-turn format reward (excluding the final turn), aligned to the
@@ -264,17 +242,12 @@ class ToolBenchRewardManager:
         format_rewards: List[List[float]] = [[] for _ in range(batch_size)]
 
         va = valid_action_stats.detach().cpu().to(torch.int64)
-        va_len = valid_action_stats_len.detach().cpu().to(torch.int64).tolist()
         vc = valid_api_call_stats.detach().cpu().to(torch.int64)
-        vc_len = valid_api_call_stats_len.detach().cpu().to(torch.int64).tolist()
 
         for i in range(batch_size):
             n_turns = len(each_turn_end_loc[i])
             n_reward_turns = max(0, n_turns - 1)
             for j in range(n_reward_turns):
-                # Align by step index j; if we don't have stats, treat as invalid.
-                if j >= va_len[i] or j >= vc_len[i]:
-                    raise ValueError(f"Sample {i} has valid action stats length as {va_len[i]} and valid api call stats length as {vc_len[i]}, but n_turns as {n_turns}")
                 v_a = int(va[i, j].item())
                 v_c = int(vc[i, j].item())
                 if v_a == 1 and v_c == 1:
