@@ -195,9 +195,10 @@ class ToolBenchRewardManager:
         
         for i in range(batch_size):
             if len(valid_action_stats[i]) != len(api_success_history[i]):
-                breakpoint()
+                print(f"Sample {i} has valid action as {valid_action_stats[i]} and api success history as {api_success_history[i]}")
+                print(f"Sample {i} has Turns stats: {turns_stats[i]}")
 
-            for j in range(turns_stats[i] - 1):
+            for j in range(min(turns_stats[i] - 1, len(api_success_history[i]))):
                 if valid_action_stats[i][j] and api_success_history[i][j]:
                     format_rewards[i].append(0.1)
                 elif valid_action_stats[i][j] and not api_success_history[i][j]:
