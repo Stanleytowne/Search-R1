@@ -26,13 +26,13 @@ EXPERIMENT_NAME=${CATEGORY}
 
 ACTOR_LEARNING_RATE=1e-6
 CRITIC_LEARNING_RATE=1e-5
-ACTOR_LR_WARMUP_RATIO=0
+ACTOR_LR_WARMUP_RATIO=0.285
 CRITIC_LR_WARMUP_RATIO=0.015
 EPOCHS=10
 TOTAL_TRAINING_STEPS=100
 SAVE_FREQ=15
 
-PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
+PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     --config-name=grpo_toolbench_trainer \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$VAL_FILE" \
