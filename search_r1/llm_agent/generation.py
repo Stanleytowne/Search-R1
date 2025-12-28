@@ -121,10 +121,11 @@ class LLMGenerationManager:
         for resp in responses_str:
             resp = resp.rstrip()
 
-            if resp.find('\nObservation:') != -1:
+            if resp.find('\nObservation: {') != -1:
+                print("[WARNING] Model tries to fake an observation, which is not allowed.")
+                print(resp)
                 resp = resp.split('\nObservation:')[0]
                 resp = resp.rstrip()
-                print("[WARNING] Model tries to fake an observation, which is not allowed.")
             
             # Check if there's a complete Action Input (function call)
             # Look for "Action Input:" followed by JSON object
