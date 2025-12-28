@@ -65,9 +65,7 @@ class ToolBenchRewardManager:
         reward_tensor = torch.zeros((batch_size, response_length), dtype=torch.float32)
         
         # get ToolBench related information from meta_info
-        meta_info = {}
-        if hasattr(data, 'meta_info') and data.meta_info:
-            meta_info = data.meta_info
+        meta_info = data.meta_info
 
         all_queries = []
         all_trajectories = []
@@ -117,6 +115,8 @@ class ToolBenchRewardManager:
                 # print(self.tokenizer.decode(trained, skip_special_tokens=False))
                 print("#" * 30)
         
+        breakpoint()
+        
         pass_rewards = self._get_remote_pass_rewards(all_queries, all_trajectories)
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
@@ -132,7 +132,6 @@ class ToolBenchRewardManager:
                     print(f"  Pass reward: {pass_rewards[i]:.3f}")
             return reward_tensor
 
-        # 获取每个样本的信息
         for i in range(batch_size):
             data_item = data[i]
             response_str = all_trajectories[i]

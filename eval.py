@@ -308,8 +308,9 @@ def evaluate_model_performance(
             # Get statistics from meta_info
             if hasattr(final_output, 'meta_info'):
                 meta = final_output.meta_info
-                result['turns'] = meta.get('turns_stats', [0])[i] if i < len(meta.get('turns_stats', [])) else 0
-                result['valid_actions'] = meta.get('valid_action_stats', [0])[i] if i < len(meta.get('valid_action_stats', [])) else 0
+                result['turns'] = meta['turns_stats'][i] if i < len(meta['turns_stats']) else 0
+                # result['valid_actions'] = meta.get('valid_action_stats', [0])[i] if i < len(meta.get('valid_action_stats', [])) else 0
+                result['valid_actions'] = sum(meta['valid_action_stats'][i]) if i < len(meta['valid_action_stats']) else 0
                 result['finish_called'] = meta.get('finish_called', {}).get(i, None)
             
             all_results.append(result)

@@ -322,7 +322,9 @@ class LLMGenerationManager:
 
         active_mask = torch.ones(batch_size, dtype=torch.bool)
         turns_stats = torch.ones(batch_size, dtype=torch.int)
-        valid_action_stats = torch.zeros(batch_size, dtype=torch.int)
+        # valid_action_stats = torch.zeros(batch_size, dtype=torch.int)
+        # valid_action_stats is a list of lists, each list is a list of valid actions for a sample
+        valid_action_stats = [[] for _ in range(batch_size)]
         active_num_list = [active_mask.sum().item()]
         rollings = gen_batch
         
@@ -403,7 +405,9 @@ class LLMGenerationManager:
             active_mask = active_mask * curr_active_mask
             active_num_list.append(active_mask.sum().item())
             turns_stats[curr_active_mask] += 1
-            valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
+            # valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
+            for i, valid in enumerate(valid_action):
+                valid_action_stats[i].append(valid)
 
             next_obs_ids = self._process_next_obs(next_obs, last=step==self.config.max_turns-1, active_mask=active_mask)
             
@@ -451,7 +455,9 @@ class LLMGenerationManager:
             curr_active_mask = torch.tensor([not done for done in dones], dtype=torch.bool)
             active_mask = active_mask * curr_active_mask
             active_num_list.append(active_mask.sum().item())
-            valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
+            # valid_action_stats += torch.tensor(valid_action, dtype=torch.int)
+            for i, valid in enumerate(valid_action):
+                valid_action_stats[i].append(valid)
             
 
             original_right_side = self._update_right_side(
@@ -461,7 +467,7 @@ class LLMGenerationManager:
         
         meta_info['turns_stats'] = turns_stats.tolist()
         meta_info['active_mask'] = active_mask.tolist()
-        meta_info['valid_action_stats'] = valid_action_stats.tolist()
+        meta_info['valid_action_stats'] = valid_action_stats
         
         # Add ToolBench reward computation info
         meta_info['api_error_stats'] = {
@@ -539,7 +545,7 @@ class LLMGenerationManager:
             
             # Get metadata if available
             turns = final_output.meta_info.get('turns_stats', [0])[sample_idx] if 'turns_stats' in final_output.meta_info else 0
-            valid_actions = final_output.meta_info.get('valid_action_stats', [0])[sample_idx] if 'valid_action_stats' in final_output.meta_info else 0
+            valid_actions = final_output.meta_info['valid_action_stats'][sample_idx] if 'valid_action_stats' in final_output.meta_info else [0]
             
             # Print formatted conversation
             print("\n" + "=" * 100)
