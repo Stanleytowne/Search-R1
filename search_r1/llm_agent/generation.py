@@ -326,14 +326,7 @@ class LLMGenerationManager:
         self.sample_api_lists = {}  # Store API validation info for each sample
         
         # Get extra_info from non_tensor_batch or meta_info
-        breakpoint()
-        extra_info = None
-        if hasattr(gen_batch, 'non_tensor_batch') and 'extra_info' in gen_batch.non_tensor_batch:
-            extra_info = gen_batch.non_tensor_batch['extra_info']
-        elif hasattr(gen_batch, 'meta_info') and 'extra_info' in gen_batch.meta_info:
-            extra_info = gen_batch.meta_info['extra_info']
-        else:
-            raise ValueError(f"Missing extra_info in gen_batch. Cannot proceed without category information.")
+        extra_info = gen_batch.non_tensor_batch['extra_info']
         
         # Extract category and API info for each sample
         for i, info in enumerate(extra_info):
