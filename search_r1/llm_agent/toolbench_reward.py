@@ -19,11 +19,66 @@ class ToolBenchRewardManager:
         self,
         tokenizer,
         num_examine: int = 0,
-        reward_server_url: str = "http://localhost:8000/evaluate_batch"
+        reward_server_url: str = "http://localhost:8000/evaluate_batch",
+        strict_turn_check: bool = True,
     ):
         self.tokenizer = tokenizer
         self.num_examine = num_examine
         self.reward_server_url = reward_server_url
+        self.strict_turn_check = strict_turn_check
+
+    def _validate_turn_consistency(
+        self,
+        sample_idx: int,
+        n_turns_from_info_mask: int,
+        response_str: str,
+        turns_stats_tensor: torch.Tensor = None,
+        valid_action_stats_len_tensor: torch.Tensor = None,
+        valid_api_call_stats_len_tensor: torch.Tensor = None,
+    ) -> None:
+        """
+        验证 turn 数是否一致：
+        - info_mask 解析得到的 n_turns（模型段落数）
+        - generation 端记录的 turns_stats（每次 env step 统计的 turn 数；最后 forced finish 时可能少 1）
+        - valid_*_stats_len（每次 execute_predictions 都会 append，包含最终 forced finish）
+        """
+        turns_stats_i = int(turns_stats_tensor[sample_idx].item()) if turns_stats_tensor is not None else None
+        va_len_i = int(valid_action_stats_len_tensor[sample_idx].item()) if valid_action_stats_len_tensor is not None else None
+        vc_len_i = int(valid_api_call_stats_len_tensor[sample_idx].item()) if valid_api_call_stats_len_tensor is not None else None
+
+        problems = []
+
+        # Most reliable: stats_len should equal actual executed turns in trajectory,
+        # which should match info_mask-derived turns.
+        if va_len_i is not None and n_turns_from_info_mask != va_len_i:
+            problems.append(f"info_mask_turns({n_turns_from_info_mask}) != valid_action_stats_len({va_len_i})")
+
+        if vc_len_i is not None and va_len_i is not None and vc_len_i != va_len_i:
+            problems.append(f"valid_api_call_stats_len({vc_len_i}) != valid_action_stats_len({va_len_i})")
+
+        # turns_stats is expected to be either equal to executed turns, or 1 smaller when a final forced-finish
+        # rollout happened (because turns_stats isn't incremented in the final rollout block).
+        if turns_stats_i is not None:
+            ok = (n_turns_from_info_mask == turns_stats_i) or (n_turns_from_info_mask == turns_stats_i + 1)
+            if not ok:
+                problems.append(
+                    f"info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}"
+                )
+
+        if problems:
+            msg = (
+                f"[TURN CHECK FAILED] sample={sample_idx} "
+                f"info_mask_turns={n_turns_from_info_mask}, "
+                f"turns_stats={turns_stats_i}, "
+                f"valid_action_stats_len={va_len_i}, "
+                f"valid_api_call_stats_len={vc_len_i}\n"
+                f"Problems: {', '.join(problems)}\n"
+                f"response(head 800 chars): {response_str[:800]}"
+            )
+            if self.strict_turn_check:
+                raise AssertionError(msg)
+            else:
+                print(msg)
     
     def __call__(self, data: DataProto) -> torch.Tensor:
         # if 'rm_scores' in data.batch.keys(), return the rm_scores
@@ -37,6 +92,7 @@ class ToolBenchRewardManager:
 
         # Per-sample bookkeeping must come from batch (reliably aligned).
         active_mask_tensor = data.batch.get('active_mask', None)
+        turns_stats_tensor = data.batch.get('turns_stats', None)
         valid_action_stats_tensor = data.batch.get('valid_action_stats', None)
         valid_action_stats_len_tensor = data.batch.get('valid_action_stats_len', None)
         valid_api_call_stats_tensor = data.batch.get('valid_api_call_stats', None)
@@ -79,6 +135,16 @@ class ToolBenchRewardManager:
                     turn_indices.append(t)
             
             each_turn_end_loc[i] = turn_indices
+
+            # turn consistency check: info_mask vs stats recorded during generation/env execution
+            self._validate_turn_consistency(
+                sample_idx=i,
+                n_turns_from_info_mask=len(turn_indices),
+                response_str=response_str,
+                turns_stats_tensor=turns_stats_tensor,
+                valid_action_stats_len_tensor=valid_action_stats_len_tensor,
+                valid_api_call_stats_len_tensor=valid_api_call_stats_len_tensor,
+            )
 
             if i < self.num_examine:
                 print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
