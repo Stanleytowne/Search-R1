@@ -194,6 +194,9 @@ class ToolBenchRewardManager:
         format_rewards = [[] for _ in range(batch_size)]
         
         for i in range(batch_size):
+            if len(valid_action_stats[i]) != len(api_success_history[i]):
+                breakpoint()
+
             for j in range(turns_stats[i] - 1):
                 if valid_action_stats[i][j] and api_success_history[i][j]:
                     format_rewards[i].append(0.1)
