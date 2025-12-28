@@ -75,7 +75,7 @@ class ToolBenchRewardManager:
                     turn_indices.append(t)
             
             each_turn_end_loc[i] = turn_indices
-            assert len(each_turn_end_loc[i]) == meta_info['turns_stats'][i], f"Sample {i} has turns stats as {meta_info['turns_stats'][i]} and each turn end loc as {each_turn_end_loc[i]}"
+            assert len(each_turn_end_loc[i]) == meta_info['turns_stats'][i], f"Sample {i} has turns stats as {meta_info['turns_stats'][i]} and each turn end loc as {each_turn_end_loc[i]}, \nresponse: {response_str}"
 
             if i < self.num_examine:
                 print(f"\n{'='*20} [DEBUG REWARD LOC] Sample {i} {'='*20}")
