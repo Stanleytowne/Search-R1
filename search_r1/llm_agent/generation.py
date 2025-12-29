@@ -156,6 +156,13 @@ class LLMGenerationManager:
 
     def _process_next_obs(self, next_obs: List[str], last: bool = False, active_mask: torch.Tensor = None) -> torch.Tensor:
         """Process next observations from environment."""
+        for i in range(len(next_obs)):
+            # for the sake of convenience, we truncate the observation to 5 * max_obs_length
+            if len(next_obs[i]) > 5 * self.config.max_obs_length:
+                print(f"[WARNING] OBSERVATION TOO LONG, TRUNCATED, {len(next_obs[i])} & {5 * self.config.max_obs_length}")
+                next_obs[i] = next_obs[i][:5 * self.config.max_obs_length]
+                next_obs[i] += '... (truncated)\n\n'
+        
         if last:
             # for the last turn, we add the finish prompt to force the model to call 'Finish'
             if active_mask is None:
@@ -170,10 +177,6 @@ class LLMGenerationManager:
             return_tensors='pt',
             add_special_tokens=False,  # Prevents adding special tokens
         )['input_ids']
-
-        if next_obs_ids.shape[1] > self.config.max_obs_length:
-            print(f"[WARNING] OBSERVATION TOO LONG, CONSIDER CHANGING YOUR CONFIG, {next_obs_ids.shape[1]} & {self.config.max_obs_length}")            
-            next_obs_ids = next_obs_ids[:, :self.config.max_obs_length]
 
         return next_obs_ids
 
@@ -194,6 +197,9 @@ class LLMGenerationManager:
         # Cut to appropriate length
         effective_len = new_attention_mask.sum(dim=1).max()
         max_len = min(self.config.max_prompt_length, effective_len)
+
+        if effective_len > self.config.max_prompt_length:
+            print(f"[WARNING] INPUT TOO LONG, TRUNCATED, {effective_len} & {self.config.max_prompt_length}")
 
         new_rollings = DataProto.from_dict({
             'input_ids': new_input_ids[:, -max_len:],
@@ -250,6 +256,9 @@ class LLMGenerationManager:
                 )
         effective_len = self.tensor_fn.create_attention_mask(responses).sum(dim=1).max()
         max_len = min(self.config.max_prompt_length, effective_len)
+
+        if max_len > self.config.max_prompt_length:
+            print(f"[WARNING] RESPONSES TOO LONG, TRUNCATED, {max_len} & {self.config.max_prompt_length}")
         
         return {'responses': responses[:, :max_len], 'responses_with_info_mask': responses_with_info_mask[:, :max_len]}
 
@@ -563,13 +572,13 @@ class LLMGenerationManager:
                 valid_action.append(1)
             elif action == 'finish':
                 # invalid finish call
-                next_obs.append('\n\nI called "Finish" but the final answer is not provided. Let me check the Action Input format and try again.\n\n')
+                next_obs.append('\n\nObservation: I called "Finish" but the final answer is not provided. Let me check the Action Input format and try again.\n\n')
                 dones.append(0)
                 valid_action.append(1)
                 valid_api_call.append(0)
             else:
                 # No action detected
-                next_obs.append('\n\nMy previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
+                next_obs.append('\n\nObservation: My previous action is invalid. I should organize my output into three parts: Thought, Action, and Action Input, and in the Action part, I should directly write the name of the API.\n\n')
                 dones.append(0)
                 valid_action.append(0)
                 valid_api_call.append(0)
