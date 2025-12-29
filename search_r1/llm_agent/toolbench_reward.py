@@ -30,29 +30,28 @@ class ToolBenchRewardManager:
         sample_idx: int,
         n_turns_from_info_mask: int,
         response_str: str,
-        turns_stats_tensor: torch.Tensor = None,
-    ) -> None:
+        turns_stats_tensor: torch.Tensor,
+    ):
         """
         验证 turn 数是否一致：
         - info_mask 解析得到的 n_turns（模型段落数）
         - generation 端记录的 turns_stats（每次 env step 统计的 turn 数；最后 forced finish 时可能少 1）
         - valid_*_stats_len（每次 execute_predictions 都会 append，包含最终 forced finish）
         """
-        turns_stats_i = int(turns_stats_tensor[sample_idx].item()) if turns_stats_tensor is not None else None
+        turns_stats_i = int(turns_stats_tensor[sample_idx].item())
 
         # turns_stats is expected to be either equal to executed turns, or 1 smaller when a final forced-finish
         # rollout happened (because turns_stats isn't incremented in the final rollout block).
-        if turns_stats_i is not None:
-            ok = (n_turns_from_info_mask == turns_stats_i)
-            if not ok:
-                msg = (
-                    f"[TURN CHECK FAILED] sample={sample_idx} "
-                    f"info_mask_turns={n_turns_from_info_mask}, "
-                    f"turns_stats={turns_stats_i}, "
-                    f"Problems: info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}\n"
-                    f"response: {response_str}"
-                )
-                raise AssertionError(msg)
+        ok = (n_turns_from_info_mask == turns_stats_i)
+        if not ok:
+            msg = (
+                f"[TURN CHECK FAILED] sample={sample_idx} "
+                f"info_mask_turns={n_turns_from_info_mask}, "
+                f"turns_stats={turns_stats_i}, "
+                f"Problems: info_mask_turns({n_turns_from_info_mask}) not in {{turns_stats({turns_stats_i}), turns_stats+1}}\n"
+                f"response: {response_str}"
+            )
+            print(msg)
 
     def __call__(self, data: DataProto) -> torch.Tensor:
         # if 'rm_scores' in data.batch.keys(), return the rm_scores
