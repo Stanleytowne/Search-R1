@@ -147,7 +147,7 @@ def process_toolbench_json(input_file: str = None, output_dir: str = None):
         # Extract category from api_list (use first API's category_name)
         category = api_list[0]['category_name']
         
-        # 为每个category构建去重的API信息集合（使用API的'name'作为唯一标识）
+        # build unique API information set for each category (use API's 'name' as the unique identifier)
         if category not in records:
             records[category] = {}
         for api in api_list_formatted:
@@ -155,14 +155,14 @@ def process_toolbench_json(input_file: str = None, output_dir: str = None):
             if api_name not in records[category]:
                 records[category][api_name] = api
 
-    # 创建输出目录
+    # create output directory
     os.makedirs(output_dir, exist_ok=True)
     
     for category, api_list in records.items():
         print(f"Category: {category} with {len(api_list)} APIs")
 
         output_file = os.path.join(output_dir, f"{category}.json")
-        # 如果输出文件已存在，则读取已有内容，加上新的不重复的部分
+        # if the output file exists, read the existing content, and add the new non-duplicate part
         if os.path.exists(output_file):
             try:
                 with open(output_file, 'r', encoding='utf-8') as f:
@@ -173,21 +173,21 @@ def process_toolbench_json(input_file: str = None, output_dir: str = None):
         else:
             original_data = {}
 
-        # 注意：records[category]为dict，original_data假定也是dict结构。合并两个dict（保留原有的不重复内容）
+        # Note: records[category] is a dict, original_data is assumed to be a dict structure. Merge two dicts (keep the original non-duplicate content)
         merged_data = dict(original_data)
         print(f"Original data length: {len(original_data)}")
         for api_name, api_info in api_list.items():
             if api_name not in merged_data:
                 merged_data[api_name] = api_info
         print(f"Merged data length: {len(merged_data)}")
-        # 保存合并结果
+        # save merged result
         with open(output_file, "w", encoding='utf-8') as f:
             json.dump(merged_data, f, ensure_ascii=False, indent=4)
 
 def main():
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument("--input_files", nargs='+', type=str, default=['data/toolbench_instruction/G1_query.json', 'data/toolbench_instruction/G2_query.json'],
+    parser.add_argument("--input_files", nargs='+', type=str, default=['data-toolbench/instruction/G1_query.json', 'data-toolbench/instruction/G2_query.json', 'data-toolbench/solvable_queries/test_instruction/G1_instruction.json', 'data-toolbench/solvable_queries/test_instruction/G1_category.json', 'data-toolbench/solvable_queries/test_instruction/G1_tool.json', 'data-toolbench/solvable_queries/test_instruction/G2_instruction.json', 'data-toolbench/solvable_queries/test_instruction/G2_category.json'],
                        help="Input files")
     parser.add_argument("--output_dir", type=str, default="data/api_infos",
                        help="Output directory")

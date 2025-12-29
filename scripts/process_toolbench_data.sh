@@ -9,19 +9,17 @@ python toolbench_data_process/gen_stage1_data.py
 echo "[3] Generating data for rl format warm-starting"
 
 python toolbench_data_process/gen_stage2_data.py \
-    --input ../StableToolBench/data/answer/G1_answer \
-    --mapping ../StableToolBench/data/instruction/G1_query.json \
-    --output ./data/toolbench_stage2
+    --input data-toolbench/answer/G1_answer \
+    --mapping data-toolbench/instruction/G1_query.json
 
 python toolbench_data_process/gen_stage2_data.py \
-    --input ../StableToolBench/data/answer/G2_answer \
-    --mapping ../StableToolBench/data/instruction/G2_query.json \
-    --output ./data/toolbench_stage2
+    --input data-toolbench/answer/G2_answer \
+    --mapping data-toolbench/instruction/G2_query.json
 
 echo "[4] Generating rl data"
 
 python toolbench_data_process/organize_instruction.py \
-    --input_dir ../StableToolBench/data/instruction \
+    --input_dir data-toolbench/instruction \
     --output_dir ./data/toolbench_instruction \
     --files G1_query.json G2_query.json
 
@@ -31,7 +29,7 @@ python toolbench_data_process/gen_rl_data.py \
 
 echo "[5] Generating test data"
 python toolbench_data_process/organize_instruction.py \
-    --input_dir ../StableToolBench/solvable_queries/test_instruction \
+    --input_dir data-toolbench/solvable_queries/test_instruction \
     --output_dir ./data/toolbench_test_instruction \
     --files G1_category.json G1_instruction.json G1_tool.json G2_category.json G2_instruction.json
 

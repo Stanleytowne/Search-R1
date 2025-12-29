@@ -6,16 +6,16 @@ import pandas as pd
 import argparse
 from vllm import LLM, SamplingParams
 
-# ================= 1. vLLM 生成用的 Prompt (Teacher Prompts) =================
+# ================= 1. vLLM generation prompts (Teacher Prompts) =================
 GENERATION_PROMPTS = [
-    # 模板 0: 叙述性
+    # template 0: narrative
     """Transform the following API JSON into a coherent, natural language paragraph describing how to use it.
 CRITICAL: You MUST explicitly mention the API name ("{API_NAME}") and its purpose at the beginning.
 Input JSON:
 {JSON_DATA}
 Your description:""",
     
-    # 模板 1: 技术参考
+    # template 1: technical reference
     """You are a technical documentation expert. Convert the provided API JSON definition into a comprehensive technical reference.
 Rules:
 1. **Identity**: Explicitly state the API Name.
@@ -25,7 +25,7 @@ Input JSON:
 {JSON_DATA}
 Your technical reference:""",
     
-    # 模板 2: 结构化摘要
+    # template 2: structured summary
     """Convert the provided API definition into a structured natural language summary.
 Format:
 1. **Tool Identifier**: The exact API name string.
@@ -36,7 +36,7 @@ Input JSON:
 Your summary:"""
 ]
 
-# ================= 2. 提问模板 =================
+# ================= 2. question templates =================
 
 # [Type A] Name -> Usage
 NAME_QUERY_TEMPLATES = [
@@ -49,20 +49,20 @@ NAME_QUERY_TEMPLATES = [
     "What does the `{name}` function do?"
 ]
 
-# [Type B] Description -> Usage (引用模式，不再强行造句)
+# [Type B] Description -> Usage (reference mode, no longer force to generate sentences)
 INTENT_QUERY_TEMPLATES = [
-    # 直接引用描述，询问名字和用法
+    # directly quote the description, ask for the name and usage
     "Which API has the description: \"{description}\"?",
     "I am looking for the tool described as: \"{description}\". How do I use it?",
     "Find the API with the following functionality: \"{description}\".",
     "What is the name and usage of the API that matches this description: \"{description}\"?",
     "Given the description \"{description}\", which tool should I call?",
     "Identify the API defined by: \"{description}\" and explain its parameters.",
-    # 模拟检索场景
+    # simulate the retrieval scenario
     "Search for the tool with description: \"{description}\"."
 ]
 
-# [Type C] Description -> Raw JSON (引用模式)
+# [Type C] Description -> Raw JSON (reference mode)
 INTENT_TO_JSON_TEMPLATES = [
     "Show me the raw JSON definition for the tool described as: \"{description}\".",
     "Return the JSON schema for the API with the description: \"{description}\".",
@@ -98,11 +98,11 @@ def main(args):
             prompts = []
             metadata = [] 
 
-            # --- 阶段 1: 准备 vLLM 输入 ---
+            # --- stage 1: prepare vLLM input ---
             for api_name, api_content in data.items():
                 json_str = json.dumps(api_content, indent=2, ensure_ascii=False)
                 
-                # 清洗 description
+                # clean description
                 raw_desc = api_content.get('description', '').strip()
                 if raw_desc.endswith('.'): raw_desc = raw_desc[:-1]
                 clean_desc = raw_desc if raw_desc else f"use the {api_name} tool"
@@ -128,47 +128,47 @@ def main(args):
             print(f"Generating {len(prompts)} responses...")
             outputs = llm.generate(prompts, sampling_params)
 
-            # --- 阶段 2: 构造混合数据 ---
+            # --- stage 2: construct mixed data ---
             data_rows = []
             
             for i, output in enumerate(outputs):
                 meta = metadata[i]
                 generated_answer = output.outputs[0].text.strip()
                 
-                # 1. 名字 -> 自然语言解释 (循环 N 次)
+                # 1. name -> natural language explanation (loop N times) -> [Important]
                 for _ in range(args.num_name_nl_pairs):
                     template = random.choice(NAME_QUERY_TEMPLATES)
                     q_text = safe_format(template, name=meta['api_name'])
                     data_rows.append({"prompt": q_text, "response": generated_answer, "source": "name_query"})
 
-                # 2. 意图 -> 自然语言解释 (循环 N 次) -> 【重点】
+                # 2. intent -> natural language explanation (loop N times)
                 for _ in range(args.num_intent_nl_pairs):
                     template = random.choice(INTENT_QUERY_TEMPLATES)
                     q_text = safe_format(template, description=meta['description'])
                     data_rows.append({"prompt": q_text, "response": generated_answer, "source": "intent_query"})
 
-            # --- 阶段 3: 原始 JSON 数据的混合 ---
+            # --- stage 3: mixed raw JSON data ---
             for api_name, api_content in data.items():
                 json_str = json.dumps(api_content, ensure_ascii=False)
                 raw_desc = api_content.get('description', '').strip()
                 if raw_desc.endswith('.'): raw_desc = raw_desc[:-1]
                 clean_desc = raw_desc if raw_desc else f"use {api_name}"
 
-                # 3. 名字 -> Raw JSON (循环 N 次)
+                # 3. name -> Raw JSON (loop N times)
                 for _ in range(args.num_name_json_pairs):
                     template = random.choice(NAME_TO_JSON_TEMPLATES)
                     q_text = safe_format(template, name=api_name)
                     data_rows.append({"prompt": q_text, "response": json_str, "source": "raw_json_name"})
 
-                # 4. 意图 -> Raw JSON (循环 N 次)
+                # 4. intent -> Raw JSON (loop N times)
                 for _ in range(args.num_intent_json_pairs):
                     template = random.choice(INTENT_TO_JSON_TEMPLATES)
                     q_text = safe_format(template, description=clean_desc)
                     data_rows.append({"prompt": q_text, "response": json_str, "source": "raw_json_intent"})
 
-            # --- 阶段 4: 保存 ---
+            # --- stage 4: save ---
             df = pd.DataFrame(data_rows)
-            # 随机打乱
+            # shuffle randomly
             df = df.sample(frac=1).reset_index(drop=True)
             
             print(f"Generated {len(df)} diverse samples for {args.input}")
