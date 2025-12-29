@@ -190,11 +190,14 @@ class ToolBenchRewardManager:
         data.batch['finish_reward'] = torch.tensor(finish_reward, dtype=torch.float32)
         # optional: sum format reward per sample for metrics
         data.batch['format_reward_sum'] = torch.tensor([float(sum(x)) for x in format_and_function_call_reward], dtype=torch.float32)
+        # 3. penalty for direct call of Finish
+        finish_penalty = torch.where(turns_stats_tensor == 1, -10, 0.0)
+        data.batch['finish_penalty'] = torch.tensor(finish_penalty, dtype=torch.float32)
 
         for i in range(batch_size):
             for j in range(len(each_turn_end_loc[i]) - 1):
                 reward_tensor[i, each_turn_end_loc[i][j]] = format_and_function_call_reward[i][j]
-            reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i]
+            reward_tensor[i, each_turn_end_loc[i][-1]] = finish_reward[i] + pass_rewards[i] * 5 + finish_penalty[i]
             
             if i < self.num_examine:
                 print(f"\n[Reward Sample {i}]")
@@ -239,7 +242,7 @@ class ToolBenchRewardManager:
                 v_a = int(va[i, j].item())
                 v_c = int(vc[i, j].item())
                 if v_a == 1 and v_c == 1:
-                    format_rewards[i].append(0.1)
+                    format_rewards[i].append(0.4)
                 elif v_a == 1 and v_c == 0:
                     format_rewards[i].append(-0.1)
                 else:
@@ -263,9 +266,9 @@ class ToolBenchRewardManager:
         active_mask_list = active_mask.detach().cpu().tolist()
         for i in range(len(active_mask_list)):
             if not active_mask_list[i]:
-                finish_rewards.append(0.2)
+                finish_rewards.append(0.)
             else:
-                finish_rewards.append(-0.5)
+                finish_rewards.append(-0.2)
         return finish_rewards
 
     def _get_remote_pass_rewards(self, queries: List[str], trajectories: List[str]) -> List[float]:

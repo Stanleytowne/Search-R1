@@ -269,19 +269,21 @@ def compute_data_metrics(batch, use_critic=True):
         metrics['env/number_of_actions/min'] = float(np.array(batch.meta_info['turns_stats'], dtype=np.int16).min())
     if 'active_mask' in batch.meta_info:
         metrics['env/finish_ratio'] = 1 - float(np.array(batch.meta_info['active_mask'], dtype=np.int16).mean())
-    if 'valid_action_stats' in batch.meta_info:
-        valid_action_stats = batch.meta_info['valid_action_stats']
+
+    # reward components (from batch, reliably aligned)
+    if batch.batch is not None and 'valid_action_stats' in batch.batch.keys():
+        valid_action_stats = batch.batch['valid_action_stats']
         valid_action_stats = np.array([sum(valid) for valid in valid_action_stats], dtype=np.int16)
         metrics['env/number_of_valid_action'] = float(valid_action_stats.mean())
         metrics['env/ratio_of_valid_action'] = float((valid_action_stats / np.array(batch.meta_info['turns_stats'], dtype=np.int16)).mean())
-
-    # reward components (from batch, reliably aligned)
     if batch.batch is not None and 'pass_reward' in batch.batch.keys():
         metrics['env/pass_reward'] = float(batch.batch['pass_reward'].detach().float().mean().cpu().item())
     if batch.batch is not None and 'format_reward_sum' in batch.batch.keys():
         metrics['env/format_and_function_call_reward'] = float(batch.batch['format_reward_sum'].detach().float().mean().cpu().item())
     if batch.batch is not None and 'finish_reward' in batch.batch.keys():
         metrics['env/finish_reward'] = float(batch.batch['finish_reward'].detach().float().mean().cpu().item())
+    if batch.batch is not None and 'finish_penalty' in batch.batch.keys():
+        metrics['env/direct_call_finish_times'] = int(batch.batch['finish_penalty'].detach().sum().cpu().item() / -10)
 
 
     return metrics
