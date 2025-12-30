@@ -50,6 +50,7 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=$SAVE_FREQ \
+    +trainer.val_before_train=true \
     trainer.test_freq=10 \
     trainer.project_name=$WANDB_PROJECT \
     trainer.experiment_name=$EXPERIMENT_NAME \
