@@ -10,7 +10,7 @@ data:
   max_start_length: 7168
   max_obs_length: 1024
   train_batch_size: 64
-  val_batch_size: 1
+  val_batch_size: 16
   return_raw_input_ids: False
   return_raw_chat: False
   shuffle_train_dataloader: True
@@ -76,7 +76,7 @@ actor_rollout_ref:
     free_cache_engine: True
     load_format: dummy_dtensor
     tensor_model_parallel_size: 1
-    max_num_batched_tokens: 8192
+    max_num_batched_tokens: 32768
     max_num_seqs: 1024
     log_prob_micro_batch_size: 4
     log_prob_use_dynamic_bsz: ${actor_rollout_ref.actor.use_dynamic_bsz}

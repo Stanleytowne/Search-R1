@@ -36,7 +36,6 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo_toolbench \
     --config-name=grpo_toolbench_trainer \
     data.train_files="$TRAIN_FILE" \
     data.val_files="$VAL_FILE" \
-    data.val_batch_size=2 \
     algorithm.adv_estimator=gae \
     actor_rollout_ref.model.path=$MODEL_PATH \
     actor_rollout_ref.actor.optim.lr="$ACTOR_LEARNING_RATE" \
