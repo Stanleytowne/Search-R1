@@ -211,7 +211,6 @@ def evaluate_model_performance(
         all_responses = []
 
         print("run", run_idx)
-        # NOTE: tqdm 的 total 应该是 “迭代次数”(batch 数)，不是样本数；否则进度条会显示异常（但不影响循环本身）
         for batch_dict in tqdm(val_dataloader, desc="Running evaluation", total=len(val_dataloader)):
             test_batch: DataProto = DataProto.from_single_dict(batch_dict)
 
@@ -236,13 +235,12 @@ def evaluate_model_performance(
                 gen_batch=test_gen_batch,
                 initial_input_ids=first_input_ids,
             )
-
-            all_responses.extend(tokenizer.batch_decode(final_gen_batch_output.batch['responses'], skip_special_tokens=True))
-            
             test_batch = test_batch.union(final_gen_batch_output)
                 
             for key in test_batch.batch.keys():
                 test_batch.batch[key] = test_batch.batch[key].long()
+
+            all_responses.extend(tokenizer.batch_decode(test_batch.batch['responses'], skip_special_tokens=True))
                 
             reward_tensor = reward_manager(test_batch)
             rewards = reward_tensor.sum(-1).cpu().tolist()
