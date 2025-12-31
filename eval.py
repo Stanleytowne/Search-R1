@@ -290,7 +290,7 @@ def main():
     parser.add_argument("--model_path", type=str, required=True, help="Model path")
     parser.add_argument("--output_name", type=str, default="test_results.json", help="Output file name")
     parser.add_argument("--category", type=str, default='Email', help="Category")
-    parser.add_argument("--num_runs", type=int, default=1, help="Number of runs")
+    parser.add_argument("--num_runs", type=int, default=3, help="Number of runs")
     parser.add_argument("--toolbench_url", type=str, default='http://127.0.0.1:12345', help="ToolBench API server URL")
     parser.add_argument("--reward_server_url", type=str, default="http://localhost:12346/evaluate_batch", 
                        help="Reward server URL")
