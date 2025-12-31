@@ -167,6 +167,7 @@ class ToolBenchRewardManager:
         data.batch['pass_reward'] = pass_reward_tensor
 
         if data[0].non_tensor_batch['data_source'] == 'toolbench-eval':
+            print("Using toolbench-eval reward")
             for i in range(batch_size):
                 last_turn_end_loc = each_turn_end_loc[i][-1]
                 reward_tensor[i, last_turn_end_loc] = pass_rewards[i]

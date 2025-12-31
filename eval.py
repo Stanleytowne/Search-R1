@@ -273,7 +273,7 @@ def evaluate_model_performance(
         })
         gen_batch.non_tensor_batch = {
             'extra_info': batch_extra_info,
-            'data_source': batch_data[0].get('data_source', 'toolbench-eval'),
+            'data_source': 'toolbench-eval',
         }
         
         # Run generation loop
