@@ -278,7 +278,7 @@ def evaluate_model_performance(
         
         # Run generation loop
         final_output = generation_manager.run_llm_loop(gen_batch, initial_input_ids)
-        final_output.non_tensor_batch['data_source'] = batch_data[0].get('data_source', 'toolbench-eval')
+        final_output.non_tensor_batch['data_source'] = 'toolbench-eval'
 
         if final_output.batch['responses'].dtype != torch.int64:
             print("WARNING: responses dtype is not int64")
