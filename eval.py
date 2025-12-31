@@ -3,6 +3,7 @@ import argparse
 import os
 import torch
 import pandas as pd
+import numpy as np
 import json
 from typing import List, Dict
 from tqdm import tqdm
@@ -115,6 +116,7 @@ def load_test_data(data_path: str) -> List[Dict]:
     # Convert to list format
     data_list = []
     for idx, row in df.iterrows():
+        assert row['data_source'] == 'toolbench-eval', f"Data source is {row['data_source']}"
         data_item = {
             'prompt': row['prompt'].tolist(),
             'data_source': row['data_source'],
@@ -146,7 +148,7 @@ def evaluate_model_performance(
     reward_server_url: str = "http://localhost:8000/evaluate_batch",
     batch_size: int = 4,
     max_turns: int = 5,
-    max_new_tokens: int = 512,
+    max_new_tokens: int = 1024,
     temperature: float = 0.7,
     top_p: float = 0.95,
     num_gpus: int = 1,
@@ -196,7 +198,7 @@ def evaluate_model_performance(
     config = GenerationConfig(
         max_turns=max_turns,
         max_start_length=7168,
-        max_prompt_length=8192,
+        max_prompt_length=16384,
         max_response_length=1024,
         max_obs_length=2000,
         num_gpus=num_gpus,
@@ -221,6 +223,7 @@ def evaluate_model_performance(
     
     # 7. Load test data
     test_data = load_test_data(test_data_path)
+    test_data_size = len(test_data)
     test_data = test_data * num_runs # repeat the data for num_runs times
     
     # 8. Evaluate
@@ -286,7 +289,8 @@ def evaluate_model_performance(
         
         # Collect results
         for i in range(len(batch_data)):
-            sample_idx = start_idx + i
+            sample_idx = (start_idx + i) % test_data_size
+            run_idx = (start_idx + i) // test_data_size
             reward_value = rewards[i].sum().item()
             
             # Get reward components (simplified, need to get from reward_manager internals)
@@ -295,6 +299,7 @@ def evaluate_model_performance(
                 'acc': reward_value,
                 'query': batch_queries[i],
                 'response': tokenizer.decode(final_output.batch['responses'][i]),
+                'run_idx': run_idx,
             }
             
             all_results.append(result)
@@ -311,6 +316,13 @@ def evaluate_model_performance(
     all_accs = [r['acc'] for r in all_results]
     avg_acc = sum(all_accs) / len(all_accs)
     print(f"Average accuracy: {avg_acc:.4f}")
+
+    run_accs = []
+    for run_idx in range(num_runs):
+        run_acc = sum(r['acc'] for r in all_results if r['run_idx'] == run_idx) / len(all_results)
+        run_accs.append(run_acc)
+    std_acc = np.std(run_accs).item()
+    print(f"Standard deviation of accuracy: {std_acc:.4f}")
     
     print("=" * 80)
     
