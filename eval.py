@@ -220,7 +220,7 @@ def evaluate_model_performance(
                 'do_sample': False,
                 'validate': True,
             }
-            all_queries.extend(tokenizer.batch_decode(test_gen_batch.batch['prompts'], skip_special_tokens=True))
+            all_queries.extend(tokenizer.batch_decode(test_gen_batch.batch['input_ids'], skip_special_tokens=True))
 
             # Copy extra_info from original batch to gen_batch if available
             if hasattr(test_batch, 'non_tensor_batch') and 'extra_info' in test_batch.non_tensor_batch:
