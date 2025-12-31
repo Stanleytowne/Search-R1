@@ -205,11 +205,14 @@ def evaluate_model_performance(
     # 8. Evaluate
     all_results = []
     
-    for i in range(num_runs):
+    for run_idx in range(num_runs):
         all_rewards = []
         all_queries = []
         all_responses = []
-        for batch_dict in val_dataloader:
+
+        print("run", run_idx)
+        # NOTE: tqdm 的 total 应该是 “迭代次数”(batch 数)，不是样本数；否则进度条会显示异常（但不影响循环本身）
+        for batch_dict in tqdm(val_dataloader, desc="Running evaluation", total=len(val_dataloader)):
             test_batch: DataProto = DataProto.from_single_dict(batch_dict)
 
             test_gen_batch = test_batch.pop(batch_keys=['input_ids', 'attention_mask', 'position_ids'])
@@ -246,12 +249,12 @@ def evaluate_model_performance(
             all_rewards.extend(rewards)
         
         # Collect results
-        for i in range(len(all_queries)):
+        for sample_idx in range(len(all_queries)):
             all_results.append({
-                'query': all_queries[i],
-                'response': all_responses[i],
-                'acc': all_rewards[i],
-                'run_idx': i,
+                'query': all_queries[sample_idx],
+                'response': all_responses[sample_idx],
+                'acc': all_rewards[sample_idx],
+                'run_idx': run_idx,
             })
     
     # 9. Statistics
@@ -269,7 +272,7 @@ def evaluate_model_performance(
 
     run_accs = []
     for run_idx in range(num_runs):
-        run_acc = sum(r['acc'] for r in all_results if r['run_idx'] == run_idx) / len(test_data_size)
+        run_acc = sum(r['acc'] for r in all_results if r['run_idx'] == run_idx) / test_data_size
         run_accs.append(run_acc)
     std_acc = np.std(run_accs).item()
     print(f"Standard deviation of accuracy: {std_acc:.4f}")
